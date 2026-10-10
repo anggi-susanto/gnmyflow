@@ -1,4 +1,4 @@
-"""Run a list of image and video jobs in order, resumably.
+"""Run a list of image, video and music jobs in order, resumably.
 
 A batch file is JSON Lines (one job per line) or a JSON list. Each job is an object:
 
@@ -6,10 +6,13 @@ A batch file is JSON Lines (one job per line) or a JSON list. Each job is an obj
      "aspect": "16:9", "count": 1, "refs": ["a.png"], "size": "2K"}
     {"id": "shot-01-clip", "kind": "video", "prompt": "...", "start": "shot-01",
      "resolution": "720p", "duration": 8, "size": "1080p"}
+    {"id": "bed", "kind": "music", "sound": "calm piano underscore", "length": "1:30"}
+    {"id": "bed-long", "kind": "music", "action": "extend", "song": "bed", "end": "2:30"}
 
 ``start``, ``end`` and ``refs`` accept file paths, media ids, or the ``id`` of an earlier
-job in the same batch (its first result is used). Results are appended to
-``<batch>.results.jsonl``; running the batch again skips jobs that already finished.
+job in the same batch (its first result is used); so does a music job's ``song``.
+Results are appended to ``<batch>.results.jsonl``; running the batch again skips jobs that
+already finished.
 """
 
 from __future__ import annotations
@@ -22,20 +25,35 @@ from pathlib import Path
 from typing import Any
 
 from studiowright.flow.options import ImageOptions, OptionError, VideoOptions
-from studiowright.music.options import MusicRequest
+from studiowright.music.options import (
+    MUSIC_ACTIONS,
+    AudioFormat,
+    EditRequest,
+    MusicJob,
+    MusicRequest,
+    VideoTemplate,
+)
 from studiowright.studio import ImageRequest, VideoRequest
 
 IMAGE_KEYS = {"id", "kind", "prompt", "model", "aspect", "count", "refs", "project", "size", "out"}
 MUSIC_KEYS = {
     "id",
     "kind",
+    "action",
     "sound",
+    "song",
+    "prompt",
     "lyrics",
     "bpm",
     "length",
+    "start",
+    "end",
     "seed",
     "model",
     "title",
+    "cover",
+    "cover_prompt",
+    "template",
     "format",
     "out",
 }
@@ -61,8 +79,15 @@ def load_jobs(path: Path) -> list[dict[str, Any]]:
         kind = job.get("kind")
         if kind not in ("image", "video", "music"):
             raise BatchError(f"{job['id']}: kind must be 'image', 'video' or 'music'")
-        if not job.get("sound" if kind == "music" else "prompt"):
-            raise BatchError(f"{job['id']}: {'sound' if kind == 'music' else 'prompt'} is required")
+        if kind == "music":
+            action = job.get("action", "create")
+            if action not in MUSIC_ACTIONS:
+                raise BatchError(f"{job['id']}: action must be one of {', '.join(MUSIC_ACTIONS)}")
+            needed = "sound" if action == "create" else "song"
+            if not job.get(needed):
+                raise BatchError(f"{job['id']}: {needed} is required for music {action}")
+        elif not job.get("prompt"):
+            raise BatchError(f"{job['id']}: prompt is required")
         keys = {"image": IMAGE_KEYS, "video": VIDEO_KEYS, "music": MUSIC_KEYS}[kind]
         unknown = set(job) - keys
         if unknown:
@@ -90,9 +115,10 @@ def finished(results: Path) -> dict[str, dict[str, Any]]:
 
 
 def _resolve(value: str | None, done: dict[str, dict[str, Any]]) -> str | None:
-    """A reference to an earlier job's id becomes that job's first media id."""
+    """A reference to an earlier job's id becomes that job's first media or song id."""
     if value and value in done:
-        media = done[value].get("result", {}).get("media_ids") or []
+        result = done[value].get("result", {})
+        media = result.get("media_ids") or [song["id"] for song in result.get("songs") or []]
         if media:
             return media[0]
     return value
@@ -100,22 +126,12 @@ def _resolve(value: str | None, done: dict[str, dict[str, Any]]) -> str | None:
 
 def build_request(
     job: dict[str, Any], done: dict[str, dict[str, Any]], base: Path
-) -> ImageRequest | VideoRequest | MusicRequest:
+) -> ImageRequest | VideoRequest | MusicJob:
     out = Path(job["out"]) if job.get("out") else None
     if out is not None and not out.is_absolute():
         out = base / out
     if job["kind"] == "music":
-        return MusicRequest.build(
-            job["sound"],
-            lyrics=job.get("lyrics"),
-            bpm=job.get("bpm"),
-            length=job.get("length"),
-            seed=job.get("seed"),
-            model=job.get("model", "lyria-3.5"),
-            title=job.get("title"),
-            audio_format=job.get("format", "wav"),
-            out_dir=out,
-        )
+        return _music_job(job, done, base, out)
     refs = tuple(_resolve(r, done) or r for r in job.get("refs", []))
     refs = tuple(
         str(base / r) if not Path(r).is_absolute() and (base / r).is_file() else r for r in refs
@@ -155,6 +171,58 @@ def build_request(
     )
 
 
+def _music_job(
+    job: dict[str, Any], done: dict[str, dict[str, Any]], base: Path, out: Path | None
+) -> MusicJob:
+    action = job.get("action", "create")
+    audio_format = job.get("format", "wav")
+    cover = job.get("cover")
+    if cover and not Path(cover).is_absolute():
+        cover = str(base / cover)
+    if action == "create":
+        request = MusicRequest.build(
+            job["sound"],
+            lyrics=job.get("lyrics"),
+            bpm=job.get("bpm"),
+            length=job.get("length"),
+            seed=job.get("seed"),
+            model=job.get("model", "lyria-3.5"),
+            title=job.get("title"),
+            audio_format=audio_format,
+            out_dir=out,
+            cover_image=cover,
+            cover_prompt=job.get("cover_prompt"),
+        )
+        return MusicJob(action, request, out_dir=out)
+    song = _resolve(job["song"], done) or job["song"]
+    edit = None
+    if action in ("extend", "cover", "replace"):
+        edit = EditRequest.build(
+            song,
+            action,
+            prompt=job.get("prompt"),
+            lyrics=job.get("lyrics"),
+            start=job.get("start"),
+            end=job.get("end"),
+            seed=job.get("seed"),
+            title=job.get("title"),
+            audio_format=audio_format,
+            out_dir=out,
+            cover_image=cover,
+            cover_prompt=job.get("cover_prompt"),
+        )
+    return MusicJob(
+        action,
+        edit,
+        song=song,
+        start=job.get("start"),
+        end=job.get("end"),
+        template=VideoTemplate(job.get("template", "simple")),
+        audio_format=AudioFormat(audio_format),
+        out_dir=out,
+    )
+
+
 @dataclass
 class BatchSummary:
     total: int
@@ -168,7 +236,7 @@ async def run_batch(
     run_image: Callable[[ImageRequest], Awaitable[dict[str, Any]]],
     run_video: Callable[[VideoRequest], Awaitable[dict[str, Any]]],
     *,
-    run_music: Callable[[MusicRequest], Awaitable[dict[str, Any]]] | None = None,
+    run_music: Callable[[MusicJob], Awaitable[dict[str, Any]]] | None = None,
     keep_going: bool = False,
     on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> BatchSummary:
@@ -184,7 +252,7 @@ async def run_batch(
         record: dict[str, Any] = {"id": job["id"], "kind": job["kind"], "started": started}
         try:
             request = build_request(job, done, batch.parent)
-            if isinstance(request, MusicRequest):
+            if isinstance(request, MusicJob):
                 if run_music is None:
                     raise BatchError("this runner cannot make music")
                 result = await run_music(request)

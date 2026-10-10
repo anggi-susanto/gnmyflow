@@ -21,7 +21,14 @@ from studiowright.flow.options import (
     VideoModel,
     VideoOptions,
 )
-from studiowright.music.options import MusicModel, MusicRequest
+from studiowright.music.options import (
+    AudioFormat,
+    ChatRequest,
+    EditRequest,
+    MusicModel,
+    MusicRequest,
+    VideoTemplate,
+)
 from studiowright.pacing import Governor
 from studiowright.store import Store
 from studiowright.studio import ImageRequest, Studio, VideoRequest
@@ -39,6 +46,11 @@ own subscriptions and credits.
 - References and frames accept a local file path (uploaded once, then reused by content)
   or a Flow media id returned by an earlier call.
 - Every result lists the saved file paths and the media ids, which later calls can reuse.
+- Flow Music (music_* tools) has its own credit balance: about 5 credits per new song,
+  extension, cover, replacement or variation; about 40 s each. music_library is free and
+  shows the balance. Songs are referred to by the "id" values results return, or "last".
+- Uploading audio or images to Flow Music needs the user's own confirmation that they
+  have the rights to the files (confirm_rights); never set it on your own.
 """
 
 server = MCPServer("studiowright", instructions=INSTRUCTIONS)
@@ -168,6 +180,8 @@ async def music_generate(
     seed: int | None = None,
     model: str = MusicModel.LYRIA_3_5.value,
     title: str | None = None,
+    cover_image: str | None = None,
+    cover_prompt: str | None = None,
     audio_format: str = "wav",
     out_dir: str | None = None,
     profile: str | None = None,
@@ -175,9 +189,11 @@ async def music_generate(
     """Make a song or instrumental in Google Flow Music (flowmusic.app) and save the audio.
 
     sound: style, instruments, mood (e.g. "calm documentary underscore, soft piano").
-    lyrics: song lyrics; leave empty for an instrumental. length: "1:00"-"3:00" or seconds.
-    audio_format: "wav" (48 kHz) or "m4a". About 5 Flow Music credits per song.
-    Returns file paths, clip ids, durations and the credits remaining before the call.
+    lyrics: song lyrics (any language); leave empty for an instrumental.
+    length: "1:00"-"3:00" or seconds. model: "lyria-3.5" (default) or "lyria-3-pro".
+    cover_image (a local file) or cover_prompt sets the song's cover art.
+    audio_format: "wav" (48 kHz), "m4a" or "mp3". About 5 Flow Music credits per song.
+    Returns the saved files and each song's id (for music_edit, music_stems, ...).
     """
     request = MusicRequest.build(
         sound,
@@ -189,9 +205,153 @@ async def music_generate(
         title=title,
         audio_format=audio_format,
         out_dir=_out(out_dir),
+        cover_image=cover_image,
+        cover_prompt=cover_prompt,
     )
     async with Studio(_profile(profile)) as studio:
         return await studio.music(request)
+
+
+@server.tool()
+async def music_edit(
+    song: str,
+    mode: str,
+    prompt: str | None = None,
+    lyrics: str | None = None,
+    start: str | None = None,
+    end: str | None = None,
+    seed: int | None = None,
+    title: str | None = None,
+    cover_image: str | None = None,
+    cover_prompt: str | None = None,
+    audio_format: str = "wav",
+    out_dir: str | None = None,
+    profile: str | None = None,
+) -> dict[str, Any]:
+    """Make a new song from an existing one in Google Flow Music.
+
+    song: a song id from an earlier call, a unique id prefix, a flowmusic.app song URL, or
+    "last" for the newest song. Uploaded audio (music_upload) works too.
+    mode:
+    - "extend": continue the song; start = where the extension begins, end = where the
+      new song ends (both optional); prompt/lyrics describe the extension.
+    - "cover": the whole song in another style; prompt is required (e.g. "slow jazz").
+    - "replace": regenerate the part between start and end; prompt and/or lyrics.
+    - "variation": new takes with the same prompt and lyrics (other fields ignored).
+    - "trim": cut the song to start-end (no generation).
+    Times look like "0:45" or "45". Lyrics replace the song's whole lyrics sheet.
+    Extend, cover, replace and variation cost about as much as a new song.
+    """
+    fmt = AudioFormat(audio_format)
+    async with Studio(_profile(profile)) as studio:
+        if mode == "variation":
+            return await studio.music_variation(song, fmt, _out(out_dir))
+        if mode == "trim":
+            return await studio.music_trim(song, start or "", end or "", fmt, _out(out_dir))
+        request = EditRequest.build(
+            song,
+            mode,
+            prompt=prompt,
+            lyrics=lyrics,
+            start=start,
+            end=end,
+            seed=seed,
+            title=title,
+            audio_format=fmt,
+            out_dir=_out(out_dir),
+            cover_image=cover_image,
+            cover_prompt=cover_prompt,
+        )
+        return await studio.music_edit(request)
+
+
+@server.tool()
+async def music_stems(
+    song: str, audio_format: str = "wav", out_dir: str | None = None, profile: str | None = None
+) -> dict[str, Any]:
+    """Split a Flow Music song into drums, bass, vocals and other, and save each stem."""
+    async with Studio(_profile(profile)) as studio:
+        return await studio.music_stems(song, AudioFormat(audio_format), _out(out_dir))
+
+
+@server.tool()
+async def music_video(
+    song: str, template: str = "simple", out_dir: str | None = None, profile: str | None = None
+) -> dict[str, Any]:
+    """Save a Flow Music song as a vertical 720x1280 MP4 that plays it over its cover art.
+
+    template: "simple", "modern" or "player". (AI-made music videos are a Producer
+    conversation: use music_chat.)
+    """
+    async with Studio(_profile(profile)) as studio:
+        return await studio.music_video(song, VideoTemplate(template), _out(out_dir))
+
+
+@server.tool()
+async def music_download(
+    songs: list[str],
+    audio_format: str = "wav",
+    out_dir: str | None = None,
+    profile: str | None = None,
+) -> dict[str, Any]:
+    """Save existing Flow Music songs (ids, id prefixes or "last") as wav, m4a or mp3."""
+    async with Studio(_profile(profile)) as studio:
+        return await studio.music_download(songs, AudioFormat(audio_format), _out(out_dir))
+
+
+@server.tool()
+async def music_library(limit: int = 20, profile: str | None = None) -> dict[str, Any]:
+    """The newest songs in the Flow Music account (ids, titles, lengths, kinds) and the
+    credit balance and plan. Free."""
+    async with Studio(_profile(profile)) as studio:
+        return await studio.music_library(limit)
+
+
+@server.tool()
+async def music_chat(
+    message: str,
+    session: str | None = None,
+    audio: str | None = None,
+    images: list[str] | None = None,
+    confirm_rights: bool = False,
+    audio_format: str = "wav",
+    out_dir: str | None = None,
+    timeout_s: int = 900,
+    profile: str | None = None,
+) -> dict[str, Any]:
+    """Talk to Flow Music's Producer agent, which can do everything the app can: write or
+    edit lyrics, plan a song, remix your music, make an AI music video, and more.
+
+    session: continue an earlier conversation (the "session" value a previous call
+    returned); omit to start a new one. audio/images: local files to attach; Flow Music
+    asks the user to confirm they have the rights to them, so set confirm_rights only
+    when the user has said so. Songs the Producer makes during the turn are saved.
+    Returns the reply text, any lyrics it wrote, suggested next steps and saved files.
+    Chatting is free; songs and videos it makes cost credits (videos can be expensive).
+    """
+    request = ChatRequest.build(
+        message,
+        session=session,
+        audio=audio,
+        images=tuple(images or ()),
+        confirm_rights=confirm_rights,
+        audio_format=audio_format,
+        out_dir=_out(out_dir),
+        timeout_s=timeout_s,
+    )
+    async with Studio(_profile(profile)) as studio:
+        return await studio.music_chat(request)
+
+
+@server.tool()
+async def music_upload(
+    file: str, confirm_rights: bool = False, profile: str | None = None
+) -> dict[str, Any]:
+    """Upload your own audio (max 40 MB) to Flow Music as a private song; returns its id
+    for music_edit / music_stems. Flow Music asks the user to confirm they have the rights
+    to the file: set confirm_rights only when the user has said so."""
+    async with Studio(_profile(profile)) as studio:
+        return await studio.music_upload(file, confirm_rights=confirm_rights)
 
 
 @server.tool()

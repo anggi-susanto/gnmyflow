@@ -28,7 +28,14 @@ from studiowright.flow.options import (
     VideoOptions,
 )
 from studiowright.flow.page import FlowError
-from studiowright.music.options import AudioFormat, MusicModel, MusicRequest
+from studiowright.music.options import (
+    AudioFormat,
+    ChatRequest,
+    EditRequest,
+    MusicModel,
+    MusicRequest,
+    VideoTemplate,
+)
 from studiowright.pacing import CoolingDown
 from studiowright.store import Store
 from studiowright.studio import ImageRequest, Studio, VideoRequest
@@ -416,7 +423,7 @@ def run(obj: dict[str, str], batch_file: Path, keep_going: bool) -> None:
             batch_file.resolve(),
             studio.image,
             studio.video,
-            run_music=studio.music,
+            run_music=studio.music_batch,
             keep_going=keep_going,
             on_event=report,
         )
@@ -426,14 +433,102 @@ def run(obj: dict[str, str], batch_file: Path, keep_going: bool) -> None:
     click.echo(f"{counts} of {summary.total}", err=True)
 
 
-@main.command()
+# --- Flow Music -----------------------------------------------------------------------------
+class _DefaultGroup(click.Group):
+    """A group that runs ``default`` when the first argument is not one of its commands,
+    so ``sw music "calm piano"`` stays short for the common case."""
+
+    def __init__(self, *args: Any, default: str, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.default = default
+
+    def parse_args(self, ctx: click.Context, args: list[str]) -> list[str]:
+        if args and args[0] not in self.commands and args[0] not in ("--help", "-h"):
+            args = [self.default, *args]
+        return super().parse_args(ctx, args)
+
+
+def _formats() -> click.Choice:
+    return click.Choice([f.value for f in AudioFormat])
+
+
+def _song_options(command: Callable[..., Any]) -> Callable[..., Any]:
+    """Output options shared by every music command that saves audio."""
+    command = click.option("--json", "as_json", is_flag=True, help="Print JSON.")(command)
+    command = click.option(
+        "--out", type=click.Path(file_okay=False, path_type=Path), help="Output folder."
+    )(command)
+    return click.option(
+        "--format", "audio_format", type=_formats(), default="wav", show_default=True
+    )(command)
+
+
+def _lyrics_options(command: Callable[..., Any]) -> Callable[..., Any]:
+    command = click.option(
+        "--lyrics-file",
+        type=click.Path(exists=True, dir_okay=False, path_type=Path),
+        help="Read lyrics from a file.",
+    )(command)
+    return click.option("--lyrics", help="Lyrics text.")(command)
+
+
+def _cover_options(command: Callable[..., Any]) -> Callable[..., Any]:
+    command = click.option("--cover-prompt", help="Have Flow Music draw cover art from this.")(
+        command
+    )
+    return click.option(
+        "--cover",
+        type=click.Path(exists=True, dir_okay=False, path_type=Path),
+        help="Cover art image for the new song.",
+    )(command)
+
+
+def _read_lyrics(lyrics: str | None, lyrics_file: Path | None) -> str | None:
+    return lyrics_file.read_text(encoding="utf-8") if lyrics_file else lyrics
+
+
+def _emit_music(result: dict[str, Any], as_json: bool) -> None:
+    if as_json:
+        click.echo(json.dumps(result, ensure_ascii=False, indent=1))
+        return
+    if result.get("reply"):
+        click.echo(result["reply"])
+    if result.get("lyrics") and result["lyrics"] not in (result.get("reply") or ""):
+        click.echo("\n" + result["lyrics"])
+    for suggestion in result.get("suggestions") or []:
+        click.echo(f"  > {suggestion}", err=True)
+    for song in result.get("songs") or []:
+        click.echo(f"{song['file']}  ({song['id']}, {song.get('seconds')} s)")
+    if not result.get("songs"):
+        for path in result.get("files", []):
+            click.echo(path)
+    if result.get("song"):
+        click.echo(f"{result['song']}  {result.get('url', '')}")
+    if result.get("session"):
+        click.echo(f"session: {result['session']}", err=True)
+    if result.get("seconds") is not None:
+        click.echo(f"done in {result['seconds']} s (job {result.get('job_id')})", err=True)
+
+
+def _option_error(make: Callable[[], Any]) -> Any:
+    try:
+        return make()
+    except OptionError as exc:
+        raise click.BadParameter(str(exc)) from exc
+
+
+@main.group(cls=_DefaultGroup, default="create")
+def music() -> None:
+    """Google Flow Music: songs, edits, stems, videos and the Producer chat.
+
+    `sw music "SOUND"` is short for `sw music create "SOUND"`. SONG arguments take a song
+    id, a unique id prefix, a flowmusic.app song URL, or `last` for the newest song.
+    """
+
+
+@music.command("create")
 @click.argument("sound")
-@click.option("--lyrics", help="Song lyrics; without lyrics the track is instrumental.")
-@click.option(
-    "--lyrics-file",
-    type=click.Path(exists=True, dir_okay=False, path_type=Path),
-    help="Read lyrics from a file.",
-)
+@_lyrics_options
 @click.option("--bpm", type=int, help="Tempo; default: Flow decides.")
 @click.option("--length", help="Length, 1:00-3:00 (e.g. 1:30 or 90); default: Flow decides.")
 @click.option("--seed", type=int, help="Seed for repeatable results.")
@@ -444,17 +539,10 @@ def run(obj: dict[str, str], batch_file: Path, keep_going: bool) -> None:
     show_default=True,
 )
 @click.option("--title", help="Song title.")
-@click.option(
-    "--format",
-    "audio_format",
-    type=click.Choice([f.value for f in AudioFormat]),
-    default="wav",
-    show_default=True,
-)
-@click.option("--out", type=click.Path(file_okay=False, path_type=Path), help="Output folder.")
-@click.option("--json", "as_json", is_flag=True, help="Print JSON.")
+@_cover_options
+@_song_options
 @click.pass_obj
-def music(
+def music_create(
     obj: dict[str, str],
     sound: str,
     lyrics: str | None,
@@ -464,17 +552,17 @@ def music(
     seed: int | None,
     model: str,
     title: str | None,
+    cover: Path | None,
+    cover_prompt: str | None,
     audio_format: str,
     out: Path | None,
     as_json: bool,
 ) -> None:
-    """Make a song or instrumental in Google Flow Music from a SOUND description."""
-    if lyrics_file:
-        lyrics = lyrics_file.read_text(encoding="utf-8")
-    try:
-        request = MusicRequest.build(
+    """Make a song (with lyrics) or an instrumental (without) from a SOUND description."""
+    request = _option_error(
+        lambda: MusicRequest.build(
             sound,
-            lyrics=lyrics,
+            lyrics=_read_lyrics(lyrics, lyrics_file),
             bpm=bpm,
             length=length,
             seed=seed,
@@ -482,10 +570,278 @@ def music(
             title=title,
             audio_format=audio_format,
             out_dir=out,
+            cover_image=cover,
+            cover_prompt=cover_prompt,
         )
-    except OptionError as exc:
-        raise click.BadParameter(str(exc)) from exc
-    _emit(_run(lambda studio: studio.music(request), obj["profile"]), as_json)
+    )
+    _emit_music(_run(lambda studio: studio.music(request), obj["profile"]), as_json)
+
+
+def _edit(
+    obj: dict[str, str],
+    mode: str,
+    song: str,
+    *,
+    prompt: str | None,
+    lyrics: str | None,
+    start: str | None,
+    end: str | None,
+    seed: int | None,
+    title: str | None,
+    cover: Path | None,
+    cover_prompt: str | None,
+    audio_format: str,
+    out: Path | None,
+    as_json: bool,
+) -> None:
+    request = _option_error(
+        lambda: EditRequest.build(
+            song,
+            mode,
+            prompt=prompt,
+            lyrics=lyrics,
+            start=start,
+            end=end,
+            seed=seed,
+            title=title,
+            audio_format=audio_format,
+            out_dir=out,
+            cover_image=cover,
+            cover_prompt=cover_prompt,
+        )
+    )
+    _emit_music(_run(lambda studio: studio.music_edit(request), obj["profile"]), as_json)
+
+
+@music.command("extend")
+@click.argument("song")
+@click.option("--prompt", help="The sound and lyrics of the extension.")
+@_lyrics_options
+@click.option("--from", "start", help="Where the extension starts (e.g. 0:45); default: Flow's.")
+@click.option("--until", "end", help="Where the extended song ends (e.g. 2:30).")
+@click.option("--seed", type=int)
+@click.option("--title", help="Title of the new song.")
+@_cover_options
+@_song_options
+@click.pass_obj
+def music_extend(obj: dict[str, str], song: str, lyrics_file: Path | None, **kw: Any) -> None:
+    """Continue SONG past its end (or from --from) as a new song."""
+    kw["lyrics"] = _read_lyrics(kw["lyrics"], lyrics_file)
+    _edit(obj, "extend", song, **kw)
+
+
+@music.command("cover")
+@click.argument("song")
+@click.option("--prompt", required=True, help="The new style, e.g. 'slow jazz with brushes'.")
+@_lyrics_options
+@click.option("--seed", type=int)
+@click.option("--title", help="Title of the new song.")
+@_cover_options
+@_song_options
+@click.pass_obj
+def music_cover(obj: dict[str, str], song: str, lyrics_file: Path | None, **kw: Any) -> None:
+    """Make a cover of SONG in another style (optionally with new lyrics)."""
+    kw["lyrics"] = _read_lyrics(kw["lyrics"], lyrics_file)
+    _edit(obj, "cover", song, start=None, end=None, **kw)
+
+
+@music.command("replace")
+@click.argument("song")
+@click.option("--start", required=True, help="Start of the part to replace (e.g. 0:15).")
+@click.option("--end", required=True, help="End of the part to replace (e.g. 0:45).")
+@click.option("--prompt", help="What the part should become.")
+@_lyrics_options
+@click.option("--seed", type=int)
+@click.option("--title", help="Title of the new song.")
+@_cover_options
+@_song_options
+@click.pass_obj
+def music_replace(obj: dict[str, str], song: str, lyrics_file: Path | None, **kw: Any) -> None:
+    """Regenerate the part of SONG between --start and --end."""
+    kw["lyrics"] = _read_lyrics(kw["lyrics"], lyrics_file)
+    _edit(obj, "replace", song, **kw)
+
+
+@music.command("variation")
+@click.argument("song")
+@_song_options
+@click.pass_obj
+def music_variation(
+    obj: dict[str, str], song: str, audio_format: str, out: Path | None, as_json: bool
+) -> None:
+    """New takes of SONG with the same prompt and lyrics."""
+    fmt = AudioFormat(audio_format)
+    _emit_music(
+        _run(lambda studio: studio.music_variation(song, fmt, out), obj["profile"]), as_json
+    )
+
+
+@music.command("trim")
+@click.argument("song")
+@click.option("--start", required=True, help="Keep from here (e.g. 0:05).")
+@click.option("--end", required=True, help="Keep until here (e.g. 0:35).")
+@_song_options
+@click.pass_obj
+def music_trim(
+    obj: dict[str, str],
+    song: str,
+    start: str,
+    end: str,
+    audio_format: str,
+    out: Path | None,
+    as_json: bool,
+) -> None:
+    """Cut SONG to --start/--end; the cut is saved as a new song."""
+    fmt = AudioFormat(audio_format)
+    _emit_music(
+        _run(lambda studio: studio.music_trim(song, start, end, fmt, out), obj["profile"]),
+        as_json,
+    )
+
+
+@music.command("stems")
+@click.argument("song")
+@_song_options
+@click.pass_obj
+def music_stems(
+    obj: dict[str, str], song: str, audio_format: str, out: Path | None, as_json: bool
+) -> None:
+    """Split SONG into drums, bass, vocals and other, and save each stem."""
+    fmt = AudioFormat(audio_format)
+    _emit_music(_run(lambda studio: studio.music_stems(song, fmt, out), obj["profile"]), as_json)
+
+
+@music.command("video")
+@click.argument("song")
+@click.option(
+    "--template",
+    type=click.Choice([t.value for t in VideoTemplate]),
+    default="simple",
+    show_default=True,
+)
+@click.option("--out", type=click.Path(file_okay=False, path_type=Path), help="Output folder.")
+@click.option("--json", "as_json", is_flag=True, help="Print JSON.")
+@click.pass_obj
+def music_video(
+    obj: dict[str, str], song: str, template: str, out: Path | None, as_json: bool
+) -> None:
+    """Save SONG as a vertical MP4 that plays it over its cover art."""
+    chosen = VideoTemplate(template)
+    _emit_music(_run(lambda studio: studio.music_video(song, chosen, out), obj["profile"]), as_json)
+
+
+@music.command("download")
+@click.argument("songs", nargs=-1, required=True)
+@_song_options
+@click.pass_obj
+def music_download(
+    obj: dict[str, str], songs: tuple[str, ...], audio_format: str, out: Path | None, as_json: bool
+) -> None:
+    """Save existing SONGS as WAV, M4A or MP3."""
+    fmt = AudioFormat(audio_format)
+    _emit_music(
+        _run(lambda studio: studio.music_download(list(songs), fmt, out), obj["profile"]),
+        as_json,
+    )
+
+
+@music.command("list")
+@click.option("--limit", default=20, show_default=True)
+@click.option("--json", "as_json", is_flag=True, help="Print JSON.")
+@click.pass_obj
+def music_list(obj: dict[str, str], limit: int, as_json: bool) -> None:
+    """The newest songs in the account, and the credit balance."""
+    result = _run(lambda studio: studio.music_library(limit), obj["profile"])
+    if as_json:
+        click.echo(json.dumps(result, ensure_ascii=False, indent=1))
+        return
+    for song in result["songs"]:
+        seconds = f"{song['seconds']:.0f}s" if song["seconds"] else ""
+        click.echo(f"{song['id']}  {seconds:>4}  {song['kind'] or '':12}  {song['title']}")
+    click.echo(f"credits: {result['credits_remaining']} ({result['plan']})", err=True)
+
+
+@music.command("credits")
+@click.pass_obj
+def music_credits(obj: dict[str, str]) -> None:
+    """Flow Music credit balance and plan."""
+    result = _run(lambda studio: studio.music_library(0), obj["profile"])
+    click.echo(f"{result['credits_remaining']} credits ({result['plan']})")
+
+
+@music.command("chat")
+@click.argument("message")
+@click.option("--session", help="Continue this session (id or URL); default: a new one.")
+@click.option(
+    "--audio",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Attach an audio file (max 40 MB).",
+)
+@click.option(
+    "--image",
+    "images",
+    multiple=True,
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Attach an image (repeatable).",
+)
+@click.option(
+    "--confirm-rights",
+    is_flag=True,
+    help="Confirm you have the rights to attached files (Flow Music asks for this).",
+)
+@click.option("--timeout", default=900, show_default=True, help="Seconds to wait for the turn.")
+@_song_options
+@click.pass_obj
+def music_chat(
+    obj: dict[str, str],
+    message: str,
+    session: str | None,
+    audio: Path | None,
+    images: tuple[Path, ...],
+    confirm_rights: bool,
+    timeout: int,
+    audio_format: str,
+    out: Path | None,
+    as_json: bool,
+) -> None:
+    """Talk to Flow Music's Producer: lyrics, ideas, remixes of your audio, music videos.
+
+    Songs the Producer makes during the turn are saved. Use --session to continue.
+    """
+    request = _option_error(
+        lambda: ChatRequest.build(
+            message,
+            session=session,
+            audio=audio,
+            images=images,
+            confirm_rights=confirm_rights,
+            audio_format=audio_format,
+            out_dir=out,
+            timeout_s=timeout,
+        )
+    )
+    _emit_music(_run(lambda studio: studio.music_chat(request), obj["profile"]), as_json)
+
+
+@music.command("upload")
+@click.argument("file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option(
+    "--confirm-rights",
+    is_flag=True,
+    required=True,
+    help="Confirm you have the rights to the file (Flow Music asks for this).",
+)
+@click.option("--json", "as_json", is_flag=True, help="Print JSON.")
+@click.pass_obj
+def music_upload(obj: dict[str, str], file: Path, confirm_rights: bool, as_json: bool) -> None:
+    """Upload your own audio as a private song you can extend, cover, replace or split."""
+    _emit_music(
+        _run(
+            lambda studio: studio.music_upload(file, confirm_rights=confirm_rights),
+            obj["profile"],
+        ),
+        as_json,
+    )
 
 
 # --- state --------------------------------------------------------------------------------

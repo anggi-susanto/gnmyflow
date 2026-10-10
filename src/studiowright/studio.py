@@ -10,9 +10,10 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import random
+import re
 import shutil
 import time
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -24,12 +25,24 @@ from playwright.async_api import Playwright, async_playwright
 from studiowright import paths
 from studiowright.browser import ChromeSession, attach, place_window
 from studiowright.flow import batchexecute as be
-from studiowright.flow.options import ImageOptions, VideoMode, VideoOptions
+from studiowright.flow.options import ImageOptions, OptionError, VideoMode, VideoOptions
 from studiowright.flow.page import FLOW_ROOT, FlowError, FlowPage, UnusualActivity, suffix_for
 from studiowright.flow.replies import is_uuid
-from studiowright.music.options import MusicRequest
+from studiowright.music.options import (
+    AudioFormat,
+    ChatRequest,
+    EditRequest,
+    MusicJob,
+    MusicRequest,
+    VideoTemplate,
+    format_time,
+    parse_time,
+)
+from studiowright.music.page import EDIT_KINDS, SONG_KINDS, MusicPage, stem_name
+from studiowright.music.page import LIBRARY_URL as MUSIC_LIBRARY
 from studiowright.music.page import ROOT as MUSIC_ROOT
-from studiowright.music.page import MusicPage
+from studiowright.music.page import SESSION_URL as MUSIC_SESSION
+from studiowright.music.wire import Clip
 from studiowright.pacing import Governor
 from studiowright.store import Store
 
@@ -470,27 +483,67 @@ class Studio:
             self._lock.release()
 
     # --- Flow Music -------------------------------------------------------------------
-    async def music(self, request: MusicRequest) -> dict[str, Any]:
-        """Make a song or instrumental on flowmusic.app and save its audio."""
+    async def _music_job(
+        self,
+        kind: str,
+        params: dict[str, Any],
+        work: Callable[[str], Awaitable[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        """Run one Flow Music job under the music lock, recorded in the job store."""
         await asyncio.to_thread(self._music_lock.acquire)
         job_id = self.store.create_job(
-            "music",
-            self.profile,
-            None,
-            {
-                "sound": request.sound,
-                "lyrics": request.lyrics,
-                "bpm": request.bpm,
-                "length_s": request.length_s,
-                "seed": request.seed,
-                "model": request.model.value,
-                "title": request.title,
-                "format": request.audio_format.value,
-            },
+            kind, self.profile, None, {k: v for k, v in params.items() if v is not None}
         )
         started = time.time()
         self.store.update_job(job_id, status="running", started=started)
         try:
+            result = await work(job_id)
+            result = {"job_id": job_id, **result, "seconds": round(time.time() - started, 1)}
+            self.store.update_job(job_id, status="done", result=result, finished=time.time())
+            return result
+        except BaseException as exc:
+            await self._fail(job_id, exc, MUSIC_ROOT)
+            raise
+        finally:
+            self._music_lock.release()
+
+    async def _save_songs(
+        self,
+        music: MusicPage,
+        clips: Sequence[Clip],
+        audio_format: AudioFormat,
+        out_dir: Path | None,
+        job_id: str,
+        *,
+        names: Sequence[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        out = self._out_dir(out_dir)
+        stem = time.strftime("%Y%m%d-%H%M%S") + f"-music-{job_id[:6]}"
+        songs = []
+        for number, clip in enumerate(clips, start=1):
+            suffix = names[number - 1] if names else str(number)
+            target = _unique(out / f"{stem}-{suffix}.{audio_format.value}")
+            await music.download(clip, audio_format, target)
+            songs.append({**clip.summary(), "file": str(target)})
+        return songs
+
+    @staticmethod
+    def _song_result(music: MusicPage, songs: list[dict[str, Any]]) -> dict[str, Any]:
+        return {
+            "files": [s["file"] for s in songs],
+            "songs": songs,
+            "credits_remaining_before": music.credits_remaining,
+            "plan": music.plan,
+        }
+
+    async def _song(self, music: MusicPage, song: str) -> str:
+        resolved = await music.resolve(song)
+        return resolved if isinstance(resolved, str) else resolved.clip_id
+
+    async def music(self, request: MusicRequest) -> dict[str, Any]:
+        """Make a song or instrumental on flowmusic.app and save its audio."""
+
+        async def work(job_id: str) -> dict[str, Any]:
             music = await MusicPage.open(self.session)
             try:
                 await music.compose(request)
@@ -499,34 +552,242 @@ class Studio:
                 music = await MusicPage.open(self.session)
                 await music.compose(request)
             await self.music_governor.wait_turn()
-            clips = await music.generate()
-            out = self._out_dir(request.out_dir)
-            stem = time.strftime("%Y%m%d-%H%M%S") + f"-music-{job_id[:6]}"
-            files = []
-            for number, clip in enumerate(clips, start=1):
-                url = clip.wav_url if request.audio_format.value == "wav" else clip.audio_url
-                if not url:
-                    raise FlowError(f"song {clip.clip_id} has no {request.audio_format.value} file")
-                response = await music.page.context.request.get(url)
-                if response.status != 200:
-                    raise FlowError(f"song download failed with HTTP {response.status}")
-                target = _unique(out / f"{stem}-{number}.{request.audio_format.value}")
-                target.write_bytes(await response.body())
-                files.append(str(target))
-            result = {
-                "job_id": job_id,
-                "files": files,
-                "clip_ids": [c.clip_id for c in clips],
-                "durations_s": [round(c.duration_s, 1) if c.duration_s else None for c in clips],
-                "titles": [c.title for c in clips],
+            watch = await music.generate(kinds=SONG_KINDS)
+            songs = await self._save_songs(
+                music, watch.ready_clips(), request.audio_format, request.out_dir, job_id
+            )
+            return self._song_result(music, songs)
+
+        params = {
+            "sound": request.sound,
+            "lyrics": request.lyrics,
+            "bpm": request.bpm,
+            "length_s": request.length_s,
+            "seed": request.seed,
+            "model": request.model.value,
+            "title": request.title,
+            "format": request.audio_format.value,
+        }
+        return await self._music_job("music", params, work)
+
+    async def music_edit(self, request: EditRequest) -> dict[str, Any]:
+        """Extend, cover or replace part of an existing song; saves the new takes."""
+
+        async def work(job_id: str) -> dict[str, Any]:
+            music = await MusicPage.open(self.session, MUSIC_LIBRARY)
+            clip_id = await self._song(music, request.song)
+            try:
+                await music.compose_edit(request, clip_id)
+            except PlaywrightError:
+                # As above: nothing is sent before Generate.
+                await music.compose_edit(request, clip_id)
+            region = await music.region_label()
+            await self.music_governor.wait_turn()
+            watch = await music.generate(known={clip_id}, kinds=EDIT_KINDS)
+            songs = await self._save_songs(
+                music, watch.ready_clips(), request.audio_format, request.out_dir, job_id
+            )
+            return {"source": clip_id, "region": region, **self._song_result(music, songs)}
+
+        params = {
+            "song": request.song,
+            "mode": request.mode.value,
+            "prompt": request.prompt,
+            "lyrics": request.lyrics,
+            "start_s": request.start_s,
+            "end_s": request.end_s,
+            "seed": request.seed,
+            "title": request.title,
+        }
+        return await self._music_job(f"music-{request.mode.value}", params, work)
+
+    async def music_variation(
+        self, song: str, audio_format: AudioFormat = AudioFormat.WAV, out_dir: Path | None = None
+    ) -> dict[str, Any]:
+        """New takes of a song with the same prompt and lyrics."""
+
+        async def work(job_id: str) -> dict[str, Any]:
+            music = await MusicPage.open(self.session, MUSIC_LIBRARY)
+            clip_id = await self._song(music, song)
+            await self.music_governor.wait_turn()
+            watch = await music.variation(clip_id)
+            songs = await self._save_songs(
+                music, watch.ready_clips(), audio_format, out_dir, job_id
+            )
+            return {"source": clip_id, **self._song_result(music, songs)}
+
+        return await self._music_job("music-variation", {"song": song}, work)
+
+    async def music_trim(
+        self,
+        song: str,
+        start: str | float,
+        end: str | float,
+        audio_format: AudioFormat = AudioFormat.WAV,
+        out_dir: Path | None = None,
+    ) -> dict[str, Any]:
+        """Cut a song to start-end; the cut is saved as a new song."""
+        start_s, end_s = parse_time(start), parse_time(end)
+        if start_s is None or end_s is None or end_s <= start_s:
+            raise OptionError("trim needs a start and an end after it")
+
+        async def work(job_id: str) -> dict[str, Any]:
+            music = await MusicPage.open(self.session, MUSIC_LIBRARY)
+            clip_id = await self._song(music, song)
+            await self.music_governor.wait_turn()
+            watch = await music.trim(clip_id, format_time(start_s), format_time(end_s))
+            songs = await self._save_songs(
+                music, watch.ready_clips(), audio_format, out_dir, job_id
+            )
+            return {"source": clip_id, **self._song_result(music, songs)}
+
+        params = {"song": song, "start_s": start_s, "end_s": end_s}
+        return await self._music_job("music-trim", params, work)
+
+    async def music_stems(
+        self, song: str, audio_format: AudioFormat = AudioFormat.WAV, out_dir: Path | None = None
+    ) -> dict[str, Any]:
+        """Split a song into drums, bass, vocals and other; saves each stem."""
+
+        async def work(job_id: str) -> dict[str, Any]:
+            music = await MusicPage.open(self.session, MUSIC_LIBRARY)
+            clip_id = await self._song(music, song)
+            await self.music_governor.wait_turn()
+            watch = await music.stems(clip_id)
+            clips = sorted(watch.ready_clips(), key=stem_name)
+            names = [stem_name(c) for c in clips]
+            songs = await self._save_songs(music, clips, audio_format, out_dir, job_id, names=names)
+            for entry, name in zip(songs, names, strict=True):
+                entry["stem"] = name
+            return {"source": clip_id, **self._song_result(music, songs)}
+
+        return await self._music_job("music-stems", {"song": song}, work)
+
+    async def music_video(
+        self,
+        song: str,
+        template: VideoTemplate = VideoTemplate.SIMPLE,
+        out_dir: Path | None = None,
+    ) -> dict[str, Any]:
+        """Render a song as an MP4 with one of Flow Music's video templates."""
+
+        async def work(job_id: str) -> dict[str, Any]:
+            music = await MusicPage.open(self.session, MUSIC_LIBRARY)
+            clip_id = await self._song(music, song)
+            await self.music_governor.wait_turn()
+            folder = paths.staging_dir() / f"music-{job_id}"
+            saved = await music.video(clip_id, template, folder)
+            name = f"{time.strftime('%Y%m%d-%H%M%S')}-music-video-{job_id[:6]}.mp4"
+            target = _unique(self._out_dir(out_dir) / name)
+            shutil.move(str(saved), target)
+            shutil.rmtree(folder, ignore_errors=True)
+            return {
+                "source": clip_id,
+                "template": template.value,
+                "files": [str(target)],
                 "credits_remaining_before": music.credits_remaining,
-                "plan": music.plan,
-                "seconds": round(time.time() - started, 1),
             }
-            self.store.update_job(job_id, status="done", result=result, finished=time.time())
-            return result
-        except BaseException as exc:
-            await self._fail(job_id, exc, MUSIC_ROOT)
-            raise
-        finally:
-            self._music_lock.release()
+
+        params = {"song": song, "template": template.value}
+        return await self._music_job("music-video", params, work)
+
+    async def music_download(
+        self,
+        songs: Sequence[str],
+        audio_format: AudioFormat = AudioFormat.WAV,
+        out_dir: Path | None = None,
+    ) -> dict[str, Any]:
+        """Save existing songs by id, id prefix or ``last``."""
+
+        async def work(job_id: str) -> dict[str, Any]:
+            music = await MusicPage.open(self.session, MUSIC_LIBRARY)
+            library = {c.clip_id: c for c in await music.library()}
+            out = self._out_dir(out_dir)
+            saved = []
+            for song in songs:
+                resolved = await music.resolve(song)
+                clip = library.get(resolved, resolved) if isinstance(resolved, str) else resolved
+                clip_id = clip.clip_id if isinstance(clip, Clip) else clip
+                title = clip.title if isinstance(clip, Clip) and clip.title else ""
+                safe = re.sub(r"[^\w\- ]+", "", title).strip() or "song"
+                target = _unique(out / f"{safe}-{clip_id[:6]}.{audio_format.value}")
+                await music.download(clip, audio_format, target)
+                saved.append(str(target))
+            return {"files": saved}
+
+        return await self._music_job("music-download", {"songs": list(songs)}, work)
+
+    async def music_library(self, limit: int = 20) -> dict[str, Any]:
+        """The newest songs in the account, with the credit balance and plan."""
+        music = await MusicPage.open(self.session, MUSIC_LIBRARY)
+        songs = await music.library()
+        return {
+            "credits_remaining": music.credits_remaining,
+            "plan": music.plan,
+            "songs": [c.summary() for c in songs[:limit]],
+        }
+
+    async def music_upload(self, file: str | Path, *, confirm_rights: bool) -> dict[str, Any]:
+        """Upload your own audio; it becomes a private song you can remix, extend or split."""
+        path = Path(file).expanduser()
+        if not path.is_file():
+            raise FileNotFoundError(f"audio file not found: {path}")
+        if not confirm_rights:
+            raise OptionError(
+                "Flow Music asks you to confirm you have the rights to uploaded files; "
+                "pass confirm_rights / --confirm-rights if you do"
+            )
+
+        async def work(job_id: str) -> dict[str, Any]:
+            music = await MusicPage.open(self.session)
+            await self.music_governor.wait_turn()
+            song = await music.upload_audio(path, confirm_rights=True)
+            return {"song": song, "url": f"{MUSIC_ROOT}/song/{song}"}
+
+        return await self._music_job("music-upload", {"file": str(path)}, work)
+
+    async def music_chat(self, request: ChatRequest) -> dict[str, Any]:
+        """Talk to the Producer agent; saves any songs it makes during the turn."""
+
+        async def work(job_id: str) -> dict[str, Any]:
+            url = f"{MUSIC_ROOT}/session/{request.session}" if request.session else MUSIC_SESSION
+            music = await MusicPage.open(self.session, url)
+            uploaded = None
+            if request.audio:
+                uploaded = await music.upload_audio(
+                    request.audio, confirm_rights=request.confirm_rights
+                )
+            for image in request.images:
+                await music.attach_image(image, confirm_rights=request.confirm_rights)
+            await self.music_governor.wait_turn()
+            watch = await music.chat(request.message, timeout_s=request.timeout_s)
+            songs = await self._save_songs(
+                music, watch.ready_clips(), request.audio_format, request.out_dir, job_id
+            )
+            return {
+                **watch.turn.summary(),
+                "uploaded": uploaded,
+                **self._song_result(music, songs),
+            }
+
+        params = {"message": request.message, "session": request.session}
+        return await self._music_job("music-chat", params, work)
+
+    async def music_batch(self, job: MusicJob) -> dict[str, Any]:
+        """Run one music step of a batch file."""
+        if isinstance(job.request, MusicRequest):
+            return await self.music(job.request)
+        if isinstance(job.request, EditRequest):
+            return await self.music_edit(job.request)
+        song = job.song or "last"
+        if job.action == "variation":
+            return await self.music_variation(song, job.audio_format, job.out_dir)
+        if job.action == "trim":
+            return await self.music_trim(
+                song, job.start or "", job.end or "", job.audio_format, job.out_dir
+            )
+        if job.action == "stems":
+            return await self.music_stems(song, job.audio_format, job.out_dir)
+        if job.action == "video":
+            return await self.music_video(song, job.template, job.out_dir)
+        raise OptionError(f"unknown music action {job.action!r}")

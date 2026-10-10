@@ -5,7 +5,8 @@ Usage:
 
 Lists the tools, calls flow_options and flow_status (free). With --generate it also calls
 flow_generate_image once (one image from the daily quota); with --music it calls
-music_generate once (5 Flow Music credits).
+music_generate once (5 Flow Music credits); with --music-edit it lists the library (free)
+and extends the newest song from 0:40 to 1:40 (5 credits).
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ def text_of(result: object) -> str:
     return "\n".join(getattr(p, "text", "") for p in parts)
 
 
-async def main(generate: bool, music: bool) -> None:
+async def main(generate: bool, music: bool, music_edit: bool) -> None:
     sw = shutil.which("sw") or "sw"
     params = (
         StdioServerParameters(command="uv", args=["run", "sw", "mcp"])
@@ -56,6 +57,22 @@ async def main(generate: bool, music: bool) -> None:
             )
             print(f"music_generate ({time.time() - started:.1f} s):", text_of(result)[:600])
             print("is_error:", getattr(result, "is_error", getattr(result, "isError", None)))
+        if music_edit:
+            library = await session.call_tool("music_library", {"limit": 3})
+            print("music_library:", " ".join(text_of(library)[:500].split()))
+            started = time.time()
+            result = await session.call_tool(
+                "music_edit",
+                {
+                    "song": "last",
+                    "mode": "extend",
+                    "start": "0:40",
+                    "end": "1:40",
+                    "prompt": "the melody opens up, brighter and wider",
+                },
+            )
+            print(f"music_edit ({time.time() - started:.1f} s):", text_of(result)[:700])
+            print("is_error:", getattr(result, "is_error", getattr(result, "isError", None)))
 
 
 if __name__ == "__main__":
@@ -63,5 +80,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--generate", action="store_true")
     parser.add_argument("--music", action="store_true")
+    parser.add_argument("--music-edit", action="store_true")
     args = parser.parse_args()
-    asyncio.run(main(args.generate, args.music))
+    asyncio.run(main(args.generate, args.music, args.music_edit))
