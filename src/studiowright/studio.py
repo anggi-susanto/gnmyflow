@@ -492,7 +492,12 @@ class Studio:
         self.store.update_job(job_id, status="running", started=started)
         try:
             music = await MusicPage.open(self.session)
-            await music.compose(request)
+            try:
+                await music.compose(request)
+            except PlaywrightError:
+                # Nothing is sent before Generate, so a fresh page can be filled again.
+                music = await MusicPage.open(self.session)
+                await music.compose(request)
             await self.music_governor.wait_turn()
             clips = await music.generate()
             out = self._out_dir(request.out_dir)
