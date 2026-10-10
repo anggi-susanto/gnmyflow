@@ -8,7 +8,9 @@ disconnects: Chrome keeps running with its tabs, ready for the next job.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright
@@ -80,6 +82,54 @@ async def place_window(session: ChromeSession, page: Page, *, visible: bool) -> 
             "Browser.setWindowBounds", {"windowId": window_id, "bounds": {"left": left, "top": 40}}
         )
     finally:
+        await cdp.detach()
+
+
+async def capture_download(
+    session: ChromeSession,
+    trigger: Callable[[], Awaitable[None]],
+    folder: Path,
+    timeout_s: float = 900,
+) -> Path:
+    """Run ``trigger`` and save the download it starts into ``folder``.
+
+    Chrome was not launched by Playwright, so Playwright's download events do not fire.
+    Chrome's own download events are used instead, for the duration of this call only.
+    """
+    folder.mkdir(parents=True, exist_ok=True)
+    cdp = await session.browser.new_browser_cdp_session()
+    names: dict[str, str] = {}
+    finished: asyncio.Future[str] = asyncio.get_running_loop().create_future()
+
+    def on_begin(event: dict[str, Any]) -> None:
+        names[event["guid"]] = event.get("suggestedFilename") or event["guid"]
+
+    def on_progress(event: dict[str, Any]) -> None:
+        if finished.done() or event.get("guid") not in names:
+            return
+        if event.get("state") == "completed":
+            finished.set_result(event["guid"])
+        elif event.get("state") == "canceled":
+            finished.set_exception(RuntimeError("Chrome canceled the download"))
+
+    cdp.on("Browser.downloadWillBegin", on_begin)
+    cdp.on("Browser.downloadProgress", on_progress)
+    await cdp.send(
+        "Browser.setDownloadBehavior",
+        {"behavior": "allowAndName", "downloadPath": str(folder), "eventsEnabled": True},
+    )
+    try:
+        await trigger()
+        guid = await asyncio.wait_for(finished, timeout=timeout_s)
+        target = folder / names[guid]
+        number = 2
+        while target.exists():
+            target = folder / f"{Path(names[guid]).stem}-{number}{Path(names[guid]).suffix}"
+            number += 1
+        (folder / guid).rename(target)
+        return target
+    finally:
+        await cdp.send("Browser.setDownloadBehavior", {"behavior": "default"})
         await cdp.detach()
 
 

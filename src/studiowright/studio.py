@@ -59,6 +59,8 @@ class ImageRequest:
     refs: Sequence[str] = ()
     project: str | None = None
     out_dir: Path | None = None
+    #: Flow's download size token (e.g. ``2K`` or ``1080p``); None keeps the original.
+    size: str | None = None
 
 
 @dataclass(frozen=True)
@@ -70,6 +72,16 @@ class VideoRequest:
     refs: Sequence[str] = ()
     project: str | None = None
     out_dir: Path | None = None
+    #: Flow's download size token (e.g. ``2K`` or ``1080p``); None keeps the original.
+    size: str | None = None
+
+
+def _unique(path: Path) -> Path:
+    candidate, number = path, 2
+    while candidate.exists():
+        candidate = path.with_name(f"{path.stem}-{number}{path.suffix}")
+        number += 1
+    return candidate
 
 
 def file_sha256(path: Path) -> str:
@@ -203,7 +215,11 @@ class Studio:
             self._lock.release()
 
     async def download(
-        self, media_ids: Sequence[str], project: str | None = None, out_dir: Path | None = None
+        self,
+        media_ids: Sequence[str],
+        project: str | None = None,
+        out_dir: Path | None = None,
+        size: str | None = None,
     ) -> dict[str, Any]:
         """Download existing media by id (e.g. a clip that finished after a timeout)."""
         await self._locked()
@@ -211,6 +227,8 @@ class Studio:
             project_id = await self._project(project)
             flow = await FlowPage.open(self.session, project_id)
             urls = await flow.fresh_media_urls()
+            if any(not any(m.startswith(r.lower()) for m in urls) for r in media_ids):
+                urls.update(await flow.fresh_media_urls())
             out = self._out_dir(out_dir)
             files = []
             for requested in media_ids:
@@ -225,7 +243,15 @@ class Studio:
                 if not url:
                     raise FlowError(f"no downloadable file for {media_id} in this project (yet)")
                 default = ".mp4" if "video" in found else ".jpg"
-                target = await flow.download(url, out / f"{media_id}{default}")
+                if size:
+                    workflow_id = found.get("workflow")
+                    if not workflow_id:
+                        raise FlowError(f"cannot open {media_id} to download size {size}")
+                    saved = await flow.download_size(workflow_id, size, out)
+                    target = _unique(out / f"{media_id}-{size}{saved.suffix or default}")
+                    saved.rename(target)
+                else:
+                    target = await flow.download(url, out / f"{media_id}{default}")
                 files.append(str(target))
             return {"project_id": project_id, "files": files}
         finally:
@@ -240,18 +266,26 @@ class Studio:
     async def _download_all(
         self,
         flow: FlowPage,
-        items: list[tuple[str, str]],
+        items: list[tuple[str, str, str | None]],
         out: Path,
         stem: str,
         default_suffix: str,
+        size: str | None = None,
     ) -> list[str]:
         files = []
-        for number, (media_id, url) in enumerate(items, start=1):
-            target = out / f"{stem}-{number}{default_suffix}"
-            await flow.download(url, target)
-            real_suffix = suffix_for(target.read_bytes()[:12], default_suffix)
-            if real_suffix != default_suffix:
-                target = target.rename(target.with_suffix(real_suffix))
+        for number, (media_id, url, workflow_id) in enumerate(items, start=1):
+            if size:
+                if not workflow_id:
+                    raise FlowError(f"cannot open {media_id} to download size {size}")
+                saved = await flow.download_size(workflow_id, size, out)
+                target = _unique(out / f"{stem}-{number}-{size}{saved.suffix or default_suffix}")
+                saved.rename(target)
+            else:
+                target = out / f"{stem}-{number}{default_suffix}"
+                await flow.download(url, target)
+                real_suffix = suffix_for(target.read_bytes()[:12], default_suffix)
+                if real_suffix != default_suffix:
+                    target = target.rename(target.with_suffix(real_suffix))
             files.append(str(target))
             self.store.add_asset(
                 flow.project_id,
@@ -299,10 +333,11 @@ class Studio:
             stem = time.strftime("%Y%m%d-%H%M%S") + f"-image-{job_id[:6]}"
             files = await self._download_all(
                 flow,
-                [(r.media_id, r.url) for r in results],
+                [(r.media_id, r.url, r.workflow_id) for r in results],
                 self._out_dir(request.out_dir),
                 stem,
                 ".jpg",
+                request.size,
             )
             result = {
                 "job_id": job_id,
@@ -363,10 +398,11 @@ class Studio:
             stem = time.strftime("%Y%m%d-%H%M%S") + f"-video-{job_id[:6]}"
             files = await self._download_all(
                 flow,
-                [(c.media_id, c.url) for c in clips],
+                [(c.media_id, c.url, c.workflow_id) for c in clips],
                 self._out_dir(request.out_dir),
                 stem,
                 ".mp4",
+                request.size,
             )
             result = {
                 "job_id": job_id,

@@ -50,6 +50,23 @@ class ImageResult:
     url: str
     width: int | None = None
     height: int | None = None
+    workflow_id: str | None = None
+
+
+def workflow_ids(payload: Any) -> dict[str, str]:
+    """Media id → workflow id (the id of its edit view), from image tuples
+    ``[media_id, null, workflow_id, …]`` and records ``[media_id, project_id, workflow_id, …]``."""
+    found: dict[str, str] = {}
+    for node in walk(payload):
+        if (
+            isinstance(node, list)
+            and len(node) >= 3
+            and is_uuid(node[0])
+            and is_uuid(node[2])
+            and (node[1] is None or is_uuid(node[1]))
+        ):
+            found.setdefault(node[0], node[2])
+    return found
 
 
 def image_results(payload: Any) -> list[ImageResult]:
@@ -76,13 +93,16 @@ def image_results(payload: Any) -> list[ImageResult]:
                 media_id = url_media_id(url) if url.startswith(IMAGE_URL_PREFIX) else None
                 if media_id:
                     sizes[media_id] = (pairs[-1][0], pairs[-1][1])
+    workflows = workflow_ids(payload)
     results: dict[str, ImageResult] = {}
     for url in strings(payload):
         if url.startswith(IMAGE_URL_PREFIX):
             media_id = url_media_id(url)
             if media_id and media_id not in results:
                 width, height = sizes.get(media_id, (None, None))
-                results[media_id] = ImageResult(media_id, url, width, height)
+                results[media_id] = ImageResult(
+                    media_id, url, width, height, workflows.get(media_id)
+                )
     return list(results.values())
 
 

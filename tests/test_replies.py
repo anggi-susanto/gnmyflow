@@ -122,3 +122,12 @@ def test_media_urls_groups_by_media_id() -> None:
     urls = r.media_urls(payload)
     assert set(urls[CLIP]) == {"video", "image"}
     assert set(urls[IMG]) == {"image"}
+
+
+def test_image_results_carry_workflow_ids() -> None:
+    payload = [[image_tuple(IMG, [1376, 768])]]
+    assert r.image_results(payload)[0].workflow_id == WF
+
+
+def test_workflow_ids_from_records() -> None:
+    assert r.workflow_ids([[video_record(3, True)]]) == {CLIP: CLIP_WF}

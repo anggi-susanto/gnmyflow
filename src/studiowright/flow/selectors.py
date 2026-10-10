@@ -41,6 +41,9 @@ MENU_DOWNLOAD = f"{OVERLAY} {MENU_ITEM}{icon('download')}"
 TOOLBAR_ADD = f"xpath=//button[.//mat-icon[normalize-space()='add']][not(ancestor::{BOX})]"
 MENU_UPLOAD = f"{OVERLAY} {MENU_ITEM}{icon('upload')}"
 
+#: The download button in a medium's edit view (top toolbar).
+EDIT_DOWNLOAD = f"button{icon('download')}"
+
 COOKIE_REJECT = "button.glue-cookie-notification-bar__reject"
 DIALOG_CLOSE = f"[role='dialog'] button{icon('close')}"
 CREDITS_WARNING = "button.prompt-warning-button"

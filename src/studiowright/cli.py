@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+from playwright.async_api import Error as PlaywrightError
 
 from studiowright import __version__, chrome, paths
 from studiowright.flow.options import (
@@ -45,6 +46,9 @@ def _run(make: Callable[[Studio], Awaitable[Any]], profile: str) -> Any:
         raise click.ClickException(str(exc)) from exc
     except chrome.ChromeError as exc:
         raise click.ClickException(str(exc)) from exc
+    except PlaywrightError as exc:
+        first_line = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+        raise click.ClickException(f"browser step failed: {first_line}") from exc
 
 
 def _emit(result: dict[str, Any], as_json: bool) -> None:
@@ -215,6 +219,10 @@ def upload(obj: dict[str, str], files: tuple[str, ...], project: str | None, as_
 )
 @click.option("--project", help="Project id; defaults to the default project.")
 @click.option("--out", type=click.Path(file_okay=False, path_type=Path), help="Output folder.")
+@click.option(
+    "--size",
+    help="Download size as Flow labels it, e.g. 2K (image) or 1080p (video); default original.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print JSON.")
 @click.pass_obj
 def image(
@@ -226,6 +234,7 @@ def image(
     refs: tuple[str, ...],
     project: str | None,
     out: Path | None,
+    size: str | None,
     as_json: bool,
 ) -> None:
     """Generate images from PROMPT."""
@@ -233,7 +242,7 @@ def image(
         options = ImageOptions.build(model, aspect, int(count))
     except OptionError as exc:
         raise click.BadParameter(str(exc)) from exc
-    request = ImageRequest(prompt, options, refs, project, out)
+    request = ImageRequest(prompt, options, refs, project, out, size)
     _emit(_run(lambda studio: studio.image(request), obj["profile"]), as_json)
 
 
@@ -277,6 +286,10 @@ def image(
 )
 @click.option("--project", help="Project id; defaults to the default project.")
 @click.option("--out", type=click.Path(file_okay=False, path_type=Path), help="Output folder.")
+@click.option(
+    "--size",
+    help="Download size as Flow labels it, e.g. 2K (image) or 1080p (video); default original.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print JSON.")
 @click.pass_obj
 def video(
@@ -293,6 +306,7 @@ def video(
     count: str,
     project: str | None,
     out: Path | None,
+    size: str | None,
     as_json: bool,
 ) -> None:
     """Generate a video clip from PROMPT."""
@@ -306,7 +320,7 @@ def video(
         options = VideoOptions.build(model, mode, aspect, resolution, int(duration), int(count))
     except OptionError as exc:
         raise click.BadParameter(str(exc)) from exc
-    request = VideoRequest(prompt, options, start, end, refs, project, out)
+    request = VideoRequest(prompt, options, start, end, refs, project, out, size)
     _emit(_run(lambda studio: studio.video(request), obj["profile"]), as_json)
 
 
@@ -314,6 +328,10 @@ def video(
 @click.argument("media_ids", nargs=-1, required=True)
 @click.option("--project", help="Project id; defaults to the default project.")
 @click.option("--out", type=click.Path(file_okay=False, path_type=Path), help="Output folder.")
+@click.option(
+    "--size",
+    help="Download size as Flow labels it, e.g. 2K (image) or 1080p (video); default original.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print JSON.")
 @click.pass_obj
 def download(
@@ -321,11 +339,48 @@ def download(
     media_ids: tuple[str, ...],
     project: str | None,
     out: Path | None,
+    size: str | None,
     as_json: bool,
 ) -> None:
     """Download existing images or clips by media id, without generating anything."""
-    result = _run(lambda studio: studio.download(list(media_ids), project, out), obj["profile"])
+    result = _run(
+        lambda studio: studio.download(list(media_ids), project, out, size), obj["profile"]
+    )
     _emit(result, as_json)
+
+
+@main.command()
+@click.argument("batch_file", type=click.Path(exists=True, dir_okay=False, path_type=Path))
+@click.option("--keep-going", is_flag=True, help="Continue after a failed job.")
+@click.pass_obj
+def run(obj: dict[str, str], batch_file: Path, keep_going: bool) -> None:
+    """Run a batch of image/video jobs (JSON Lines or a JSON list), resumably.
+
+    Results are appended to BATCH_FILE.results.jsonl; running again skips finished jobs.
+    A job's start/end/refs may name an earlier job's id to reuse its result.
+    """
+    from studiowright.batch import BatchError, load_jobs, run_batch
+
+    try:
+        load_jobs(batch_file)
+    except (BatchError, ValueError) as exc:
+        raise click.ClickException(f"invalid batch: {exc}") from exc
+
+    def report(record: dict[str, Any]) -> None:
+        files = (record.get("result") or {}).get("files", [])
+        detail = ", ".join(files) if files else record.get("error", "")
+        click.echo(f"{record['id']}: {record['status']} ({record['seconds']} s) {detail}")
+
+    async def make(studio: Studio) -> Any:
+        return await run_batch(
+            batch_file.resolve(), studio.image, studio.video, keep_going=keep_going, on_event=report
+        )
+
+    summary = _run(make, obj["profile"])
+    click.echo(
+        f"{summary.done} done, {summary.failed} failed, {summary.skipped} skipped of {summary.total}",
+        err=True,
+    )
 
 
 # --- state --------------------------------------------------------------------------------

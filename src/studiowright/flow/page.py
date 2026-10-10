@@ -17,7 +17,7 @@ from typing import Any
 
 from playwright.async_api import FileChooser, Locator, Page, Request, Response
 
-from studiowright.browser import ChromeSession, ensure_rendering
+from studiowright.browser import ChromeSession, capture_download, ensure_rendering
 from studiowright.flow import batchexecute as be
 from studiowright.flow import replies
 from studiowright.flow import selectors as s
@@ -52,6 +52,7 @@ class VideoClip:
     media_id: str
     url: str
     poster_url: str | None
+    workflow_id: str | None = None
 
 
 def _rpc(url: str) -> str:
@@ -121,9 +122,16 @@ def _raise_for_refusal(exc: be.RpcError) -> None:
 
 
 class FlowPage:
-    def __init__(self, page: Page, project_id: str) -> None:
+    def __init__(self, page: Page, project_id: str, session: ChromeSession | None = None) -> None:
         self.page = page
         self.project_id = project_id
+        self._session = session
+
+    @property
+    def session(self) -> ChromeSession:
+        if self._session is None:
+            raise RuntimeError("this FlowPage was created without a Chrome session")
+        return self._session
 
     @property
     def url(self) -> str:
@@ -131,7 +139,7 @@ class FlowPage:
 
     @classmethod
     async def open(cls, session: ChromeSession, project_id: str) -> FlowPage:
-        flow = cls(await session.page_for(f"{FLOW_ROOT}project/{project_id}"), project_id)
+        flow = cls(await session.page_for(f"{FLOW_ROOT}project/{project_id}"), project_id, session)
         await ensure_rendering(session, flow.page)
         if not flow.page.url.startswith(flow.url):
             await flow.page.goto(flow.url, wait_until="domcontentloaded")
@@ -443,7 +451,13 @@ class FlowPage:
                 ids = submitted.get("ids")
                 if ids and all("video" in urls.get(i, {}) for i in ids):
                     return [
-                        VideoClip(i, urls[i]["video"], urls[i].get("image")) for i in sorted(ids)
+                        VideoClip(
+                            i,
+                            urls[i]["video"],
+                            urls[i].get("image"),
+                            clips[i].workflow_id if i in clips else None,
+                        )
+                        for i in sorted(ids)
                     ]
                 failed = [r for r in clips.values() if r.status not in (None, 2, 3, 6)]
                 if failed:
@@ -467,10 +481,12 @@ class FlowPage:
         with ReplyWatch(self.page, ["as29s"]) as watch:
             await tile.click()
             await self.page.wait_for_url(re.compile(r".*/edit/.*"), timeout=10_000)
-            deadline = time.monotonic() + 15
-            while time.monotonic() < deadline:
-                got_reply = await watch.wait(1.5)
-                if watch.bodies and not got_reply:
+            # The page answers in several batches; wait until the replies go quiet.
+            started = last = time.monotonic()
+            while time.monotonic() - started < 20:
+                if await watch.wait(0.5):
+                    last = time.monotonic()
+                elif watch.bodies and time.monotonic() - last > 2.5:
                     break
         for rpc_id, _status, text in watch.bodies:
             try:
@@ -479,9 +495,47 @@ class FlowPage:
                 continue
             for media_id, found in replies.media_urls(payload).items():
                 urls.setdefault(media_id, {}).update(found)
+            for media_id, workflow_id in replies.workflow_ids(payload).items():
+                urls.setdefault(media_id, {}).setdefault("workflow", workflow_id)
         await self.page.goto(self.url, wait_until="domcontentloaded")
         await self.ready()
         return urls
+
+    async def download_size(
+        self, workflow_id: str, size: str, folder: Path, timeout_s: float = 900
+    ) -> Path:
+        """Download through the edit view's own menu, e.g. ``2K`` or ``1080p`` (upscaled).
+
+        The size token is the start of the menu entry, which Flow does not translate.
+        Upscaling happens in Flow and can take a while before the file arrives.
+        """
+        await self.page.goto(f"{self.url}/edit/{workflow_id}", wait_until="domcontentloaded")
+        button = self.page.locator(s.EDIT_DOWNLOAD).first
+        try:
+            await button.wait_for(state="visible", timeout=15_000)
+            # The button stays disabled until the edit view has loaded the medium.
+            deadline = time.monotonic() + 45
+            while await button.is_disabled():
+                if time.monotonic() > deadline:
+                    raise FlowError("the download button stayed disabled in the edit view")
+                await asyncio.sleep(0.25)
+            await button.click()
+            entries = self.page.locator(f"{s.OVERLAY} {s.MENU_ITEM}, {s.OVERLAY} button")
+            await entries.first.wait_for(state="visible", timeout=5000)
+            entry = entries.filter(
+                has_text=re.compile(rf"^\s*{re.escape(size)}(?![0-9A-Za-z])", re.IGNORECASE)
+            )
+            if not await entry.count():
+                offered = [" ".join(t.split()) for t in await entries.all_inner_texts()]
+                raise FlowError(f"size {size!r} is not offered; Flow offers: {offered}")
+            if await entry.first.is_disabled():
+                raise FlowError(f"size {size!r} is not available on this account")
+            return await capture_download(
+                self.session, entry.first.click, folder, timeout_s=timeout_s
+            )
+        finally:
+            await self.page.goto(self.url, wait_until="domcontentloaded")
+            await self.ready()
 
     async def download(self, url: str, target: Path) -> Path:
         response = await self.page.context.request.get(url)

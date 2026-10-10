@@ -84,15 +84,22 @@ async def flow_generate_image(
     refs: list[str] | None = None,
     project: str | None = None,
     out_dir: str | None = None,
+    size: str | None = None,
     profile: str | None = None,
 ) -> dict[str, Any]:
     """Generate 1-4 images in Google Flow and save them locally.
 
     refs: reference images, each a local file path or a Flow media id.
+    size: download size as Flow labels it ("1K" original, "2K" upscaled); default original.
     Returns file paths, media ids, image sizes and the job id.
     """
     request = ImageRequest(
-        prompt, ImageOptions.build(model, aspect, count), tuple(refs or ()), project, _out(out_dir)
+        prompt,
+        ImageOptions.build(model, aspect, count),
+        tuple(refs or ()),
+        project,
+        _out(out_dir),
+        size,
     )
     async with Studio(_profile(profile)) as studio:
         return await studio.image(request)
@@ -112,13 +119,16 @@ async def flow_generate_video(
     count: int = 1,
     project: str | None = None,
     out_dir: str | None = None,
+    size: str | None = None,
     profile: str | None = None,
 ) -> dict[str, Any]:
     """Generate a video clip in Google Flow (costs credits) and save it locally.
 
     mode "frames": optional start and end frame (file path or media id); text-to-video
     when neither is given. mode "ingredients": refs are reference images.
-    resolution and duration apply to Omni only. Returns file paths and media ids.
+    resolution and duration apply to Omni only. size: download size as Flow labels it
+    (e.g. "1080p" upscaled from a 720p clip, "270p" GIF); default original.
+    Returns file paths and media ids.
     """
     if end and not start:
         raise ValueError("an end frame needs a start frame")
@@ -127,7 +137,9 @@ async def flow_generate_video(
     if mode == VideoMode.INGREDIENTS.value and (start or end):
         raise ValueError("start/end frames need mode 'frames'")
     options = VideoOptions.build(model, mode, aspect, resolution, duration, count)
-    request = VideoRequest(prompt, options, start, end, tuple(refs or ()), project, _out(out_dir))
+    request = VideoRequest(
+        prompt, options, start, end, tuple(refs or ()), project, _out(out_dir), size
+    )
     async with Studio(_profile(profile)) as studio:
         return await studio.video(request)
 
@@ -146,12 +158,14 @@ async def flow_download(
     media_ids: list[str],
     project: str | None = None,
     out_dir: str | None = None,
+    size: str | None = None,
     profile: str | None = None,
 ) -> dict[str, Any]:
     """Download existing images or clips by media id (or unique id prefix), e.g. a clip
-    that finished after a timeout. Generates nothing."""
+    that finished after a timeout, optionally at another size ("2K", "1080p"). Generates
+    nothing new."""
     async with Studio(_profile(profile)) as studio:
-        return await studio.download(media_ids, project, _out(out_dir))
+        return await studio.download(media_ids, project, _out(out_dir), size)
 
 
 @server.tool()
