@@ -1,5 +1,8 @@
 {
   "name": "studiowright",
-  "description": "Generate Google Flow images and videos from Claude Code, through your own signed-in Chrome and Flow subscription. Unofficial; not affiliated with Google.",
-  "author": { "name": "Umut Koçak" }
+  "version": "0.2.0",
+  "description": "Generate Google Flow images and videos and Google Flow Music songs, edits and stems from Claude Code, through your own signed-in Chrome and subscriptions. Unofficial; not affiliated with Google.",
+  "author": {
+    "name": "Umut Koçak"
+  }
 }

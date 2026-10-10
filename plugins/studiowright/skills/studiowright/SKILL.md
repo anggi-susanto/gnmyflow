@@ -1,19 +1,19 @@
 ---
 name: studiowright
-description: Use when the user wants images or video clips made in Google Flow (Nano Banana images; Omni or Veo video), songs or instrumental music made in Google Flow Music, wants to reuse reference images or start/end frames, or wants existing Flow media downloaded. Explains the StudioWright MCP tools, their options, costs and pacing.
+description: Use when the user wants images or video clips made in Google Flow (Nano Banana images; Omni or Veo video), or songs, instrumentals, song edits (extend, cover, replace, variation, trim), stems, lyrics or music videos made in Google Flow Music, wants to reuse reference images or start/end frames, or wants existing Flow or Flow Music media downloaded. Explains the StudioWright MCP tools, their options, costs and pacing.
 ---
 
-# StudioWright: Google Flow through the user's own Chrome
+# StudioWright: Google Flow and Flow Music through the user's own Chrome
 
-StudioWright drives Google Flow's web UI in the user's own signed-in Chrome. It spends the user's own Flow subscription and credits. It is unofficial and not affiliated with Google.
+StudioWright drives Google Flow's and Google Flow Music's web UIs in the user's own signed-in Chrome. It spends the user's own subscriptions and credits. It is unofficial and not affiliated with Google.
 
 ## Before the first call
 
-- Run `flow_status` once to see the default project, recent jobs and any cooldown.
-- If there is no default project, call `flow_create_project` with a short title, or ask the user for a project id from their Flow URL and call `flow_use_project`.
-- If a tool says the profile is not signed in, tell the user to run `sw auth login` in a terminal and sign in by hand. Never ask for passwords.
+- Run `flow_status` once to see the default project, recent jobs and any cooldown. For music, `music_library` shows the credit balance and the newest songs (free).
+- If there is no default Flow project, call `flow_create_project` with a short title, or ask the user for a project id from their Flow URL and call `flow_use_project`.
+- If a tool says the profile is not signed in, tell the user to run `sw stop`, then `sw auth login` (Flow) or `sw auth login --url https://www.flowmusic.app/` (Flow Music) in a terminal and sign in by hand. Never ask for passwords.
 
-## Making media
+## Images and video (Google Flow)
 
 - Images: `flow_generate_image(prompt, model, aspect, count, refs)`.
   - The default is Nano Banana 2.1 at 16:9 and x1. Images cost no credits.
@@ -30,21 +30,36 @@ StudioWright drives Google Flow's web UI in the user's own signed-in Chrome. It 
 
 ## Music (Google Flow Music)
 
-- `music_generate(sound, lyrics, bpm, length, seed, model, title, audio_format)`.
-- `sound` describes the style, instruments and mood. Leave `lyrics` empty for an instrumental; Turkish lyrics work.
-- `length` is "1:00"-"3:00". The output is 48 kHz WAV by default.
-- About 5 Flow Music credits per song (a separate balance from Flow's), and about 40 s per call.
+Flow Music has its own credit balance. Songs are referred to by the `id` values results return, a unique id prefix, a flowmusic.app song URL, or `"last"` for the newest song.
+
+- New song: `music_generate(sound, lyrics, bpm, length, seed, model, title, cover_image, cover_prompt, audio_format)`.
+  - `sound` describes style, instruments and mood. Leave `lyrics` empty for an instrumental; any language works.
+  - `length` is "1:00"-"3:00". `audio_format` is "wav" (48 kHz, default), "m4a" or "mp3".
+- Change a song: `music_edit(song, mode, prompt, lyrics, start, end, ...)`.
+  - `extend`: continue the song; `start` = where the extension begins, `end` = where the new song ends.
+  - `cover`: the whole song in another style; `prompt` is required.
+  - `replace`: regenerate `start`-`end`, described by `prompt` and/or new `lyrics` (the whole sheet).
+  - `variation`: new takes with the same prompt and lyrics.
+  - `trim`: cut to `start`-`end` (no generation, free).
+- `music_stems(song)`: drums, bass, vocals and other as separate files (free).
+- `music_video(song, template)`: a vertical MP4 over the cover art (`simple`, `modern`, `player`; free). If one template fails, try another.
+- `music_download(songs, audio_format)`: existing songs again, any format.
+- `music_chat(message, session, audio, images, confirm_rights)`: the Producer agent can write or edit lyrics, plan a song, remix uploaded audio, or make an AI music video. Continue a conversation with the `session` a previous reply returned. Chatting is free; songs it makes cost credits, and AI music videos can be expensive, so ask the user first.
+- `music_upload(file, confirm_rights)`: the user's own audio becomes a private song that `music_edit` and `music_stems` accept.
+- **Rights:** Flow Music asks the user to confirm they have the rights to uploaded audio and images. Set `confirm_rights=true` only after the user has said so. Never decide it yourself.
+- **Costs:** about 5 credits per new song, extension, cover, replacement or variation, and about 30-50 s each. Ask before making many.
 
 ## Results
 
-Each result returns `files` (saved local paths), `media_ids` and `job_id`.
+Each result returns `files` (saved local paths) and `job_id`; Flow results add `media_ids`, music results add `songs` (with ids).
 
-- Reuse a `media_id` as a later `ref`, `start` or `end` instead of re-uploading the file.
+- Reuse a `media_id` as a later `ref`, `start` or `end` instead of re-uploading the file, and a song `id` for later music calls.
 - To show an image to the user, read the saved file.
 
 ## Timing, pacing, failures
 
-- **Timing:** an image takes about 20-30 s, a clip about 30-90 s. Calls are queued and paced per profile. Don't fire many calls in parallel; run them one after another.
+- **Timing:** an image takes about 20-30 s, a clip about 30-90 s, a song about 40 s. Calls are queued and paced per profile. Don't fire many calls in parallel; run them one after another.
 - **Unusual activity:** if Flow reports it, the profile cools down for about 30 min. Tell the user and stop; do not retry during the cooldown.
 - **Clip timeout:** if a clip times out, the error names its media id. Later, `flow_download(media_ids=[...])` fetches it without generating again.
 - **Refusals:** a content refusal is final for that prompt. Rephrase it rather than resubmitting it unchanged.
+- **Failures** leave a screenshot path in the error; mention it to the user.

@@ -1,12 +1,14 @@
 {
   "name": "studiowright",
-  "owner": { "name": "Umut Koçak" },
-  "description": "StudioWright: Google Flow from Claude Code, through your own signed-in Chrome.",
+  "owner": {
+    "name": "Umut Koçak"
+  },
+  "description": "StudioWright: Google Flow and Google Flow Music from Claude Code, through your own signed-in Chrome.",
   "plugins": [
     {
       "name": "studiowright",
       "source": "./plugins/studiowright",
-      "description": "MCP tools to generate Google Flow images and videos, plus a skill on how to use them."
+      "description": "MCP tools for Google Flow images and videos and Google Flow Music songs, plus a skill on how to use them."
     }
   ]
 }
