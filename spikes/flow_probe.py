@@ -35,7 +35,7 @@ from urllib.parse import parse_qs, urlparse
 from playwright.async_api import BrowserContext, Page, Route, async_playwright
 
 from studiowright import paths
-from studiowright.browser import open_profile
+from studiowright.browser import attach
 from studiowright.flow import batchexecute as be
 
 FLOW_URL = "https://flow.google.com/"
@@ -275,7 +275,8 @@ async def run(profile: str, skip_upload: bool) -> None:
     out_dir = paths.captures_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as playwright:
-        context = await open_profile(playwright, paths.profile_dir(profile))
+        session = await attach(playwright, profile)
+        context = session.context
         probe = Probe(context, out_dir)
         await context.add_init_script(HOOK_JS)
         await context.route("**/batchexecute*", probe.on_route)
@@ -304,7 +305,7 @@ async def run(profile: str, skip_upload: bool) -> None:
                 json.dumps({"calls": probe.calls, "report": probe.report}, indent=1),
                 encoding="utf-8",
             )
-            await context.close()
+            await session.detach()
     print(json.dumps(probe.report, indent=1, ensure_ascii=False))
     print(f"raw capture: {raw}")
 

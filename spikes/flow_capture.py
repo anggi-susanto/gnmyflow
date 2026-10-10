@@ -35,7 +35,7 @@ from urllib.parse import parse_qs, urlparse
 from playwright.async_api import Request, Response, Route, async_playwright
 
 from studiowright import paths
-from studiowright.browser import open_profile
+from studiowright.browser import attach
 
 FLOW_URL = "https://flow.google.com/"
 IMAGE_RPC = "ogiZ0b"
@@ -180,7 +180,8 @@ async def run(profile: str, minutes: float, send: bool) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     recorder = Recorder(drop_generation=not send)
     async with async_playwright() as playwright:
-        context = await open_profile(playwright, paths.profile_dir(profile))
+        session = await attach(playwright, profile)
+        context = session.context
         await context.add_init_script(HOOK_JS)
         await context.route("**/batchexecute*", recorder.on_route)
         context.on("request", recorder.on_request)
@@ -200,7 +201,7 @@ async def run(profile: str, minutes: float, send: bool) -> None:
                 session = await open_page.evaluate(SESSION_PARAMS_JS)
             except Exception:  # a closed or navigating page has nothing to report
                 continue
-        await context.close()
+        await session.detach()
 
     stamp = time.strftime("%Y%m%d-%H%M%S")
     path = out_dir / f"flow-capture-{stamp}.json"
