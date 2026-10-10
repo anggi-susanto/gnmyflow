@@ -90,7 +90,7 @@ def video_record(status: int, with_url: bool) -> list:
     if with_url:
         media_info[0][8] = f"https://flow-content.google/video/{CLIP}?Expires=1&Signature=x"
         details[10] = f"https://flow-content.google/image/{CLIP}?Expires=1&Signature=y"
-    return [CLIP_WF, PROJECT, CLIP, None, None, details, None, media_info]
+    return [CLIP, PROJECT, CLIP_WF, None, None, details, None, media_info]
 
 
 def test_video_records_track_status_and_urls() -> None:

@@ -115,7 +115,11 @@ class VideoRecord:
 
 
 def video_records(payload: Any, project_id: str | None = None) -> list[VideoRecord]:
-    """Records ``[workflow_id, project_id, media_id, …]`` in submit, poll or result replies."""
+    """Records ``[media_id, project_id, workflow_id, …]`` in submit, poll or result replies.
+
+    ``media_id`` is the id inside signed URLs; ``workflow_id`` is the id of the clip's edit
+    route (measured 2026-10-10).
+    """
     found: dict[str, VideoRecord] = {}
     for node in walk(payload):
         if not (
@@ -134,7 +138,7 @@ def video_records(payload: Any, project_id: str | None = None) -> list[VideoReco
             status = details[8][0] if isinstance(details[8][0], int) else None
         video_url = next((s for s in strings(node) if s.startswith(VIDEO_URL_PREFIX)), None)
         poster_url = next((s for s in strings(node) if s.startswith(IMAGE_URL_PREFIX)), None)
-        found[node[2]] = VideoRecord(node[0], node[2], status, video_url, poster_url)
+        found[node[0]] = VideoRecord(node[2], node[0], status, video_url, poster_url)
     return list(found.values())
 
 

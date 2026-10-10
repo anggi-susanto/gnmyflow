@@ -202,6 +202,35 @@ class Studio:
         finally:
             self._lock.release()
 
+    async def download(
+        self, media_ids: Sequence[str], project: str | None = None, out_dir: Path | None = None
+    ) -> dict[str, Any]:
+        """Download existing media by id (e.g. a clip that finished after a timeout)."""
+        await self._locked()
+        try:
+            project_id = await self._project(project)
+            flow = await FlowPage.open(self.session, project_id)
+            urls = await flow.fresh_media_urls()
+            out = self._out_dir(out_dir)
+            files = []
+            for requested in media_ids:
+                matches = [m for m in urls if m.startswith(requested.lower())]
+                if len(matches) > 1:
+                    raise FlowError(
+                        f"{requested!r} matches {len(matches)} media; give more characters"
+                    )
+                media_id = matches[0] if matches else requested
+                found = urls.get(media_id, {})
+                url = found.get("video") or found.get("image")
+                if not url:
+                    raise FlowError(f"no downloadable file for {media_id} in this project (yet)")
+                default = ".mp4" if "video" in found else ".jpg"
+                target = await flow.download(url, out / f"{media_id}{default}")
+                files.append(str(target))
+            return {"project_id": project_id, "files": files}
+        finally:
+            self._lock.release()
+
     # --- generation -------------------------------------------------------------------
     def _out_dir(self, requested: Path | None) -> Path:
         out = requested or paths.output_dir()

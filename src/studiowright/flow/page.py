@@ -450,7 +450,38 @@ class FlowPage:
                     raise GenerationRefused(
                         f"Flow reported the clip failed (status {failed[0].status})"
                     )
-        raise FlowError(f"the clip was not ready within {timeout_s:.0f} s")
+        pending = " ".join(sorted(submitted.get("ids", ())))
+        hint = f"; it may still finish: sw download {pending}" if pending else ""
+        raise FlowError(f"the clip was not ready within {timeout_s:.0f} s{hint}")
+
+    async def fresh_media_urls(self) -> dict[str, dict[str, str]]:
+        """Signed URLs for every medium in the project, keyed by media id.
+
+        Opening any tile's edit view makes the page fetch fresh URLs for the whole project
+        (``as29s``); they are read from that reply, then the page returns to the grid.
+        """
+        tile = self.page.locator(f"{s.VIDEO_TILE}, {s.IMAGE_TILE}").first
+        if not await tile.count():
+            raise AssetNotFound("the project has no media yet")
+        urls: dict[str, dict[str, str]] = {}
+        with ReplyWatch(self.page, ["as29s"]) as watch:
+            await tile.click()
+            await self.page.wait_for_url(re.compile(r".*/edit/.*"), timeout=10_000)
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                got_reply = await watch.wait(1.5)
+                if watch.bodies and not got_reply:
+                    break
+        for rpc_id, _status, text in watch.bodies:
+            try:
+                payload = be.parse_reply(text, rpc_id)
+            except (be.RpcError, be.MissingReply):
+                continue
+            for media_id, found in replies.media_urls(payload).items():
+                urls.setdefault(media_id, {}).update(found)
+        await self.page.goto(self.url, wait_until="domcontentloaded")
+        await self.ready()
+        return urls
 
     async def download(self, url: str, target: Path) -> Path:
         response = await self.page.context.request.get(url)

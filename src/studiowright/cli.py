@@ -310,6 +310,24 @@ def video(
     _emit(_run(lambda studio: studio.video(request), obj["profile"]), as_json)
 
 
+@main.command()
+@click.argument("media_ids", nargs=-1, required=True)
+@click.option("--project", help="Project id; defaults to the default project.")
+@click.option("--out", type=click.Path(file_okay=False, path_type=Path), help="Output folder.")
+@click.option("--json", "as_json", is_flag=True, help="Print JSON.")
+@click.pass_obj
+def download(
+    obj: dict[str, str],
+    media_ids: tuple[str, ...],
+    project: str | None,
+    out: Path | None,
+    as_json: bool,
+) -> None:
+    """Download existing images or clips by media id, without generating anything."""
+    result = _run(lambda studio: studio.download(list(media_ids), project, out), obj["profile"])
+    _emit(result, as_json)
+
+
 # --- state --------------------------------------------------------------------------------
 @main.command()
 @click.option("--limit", default=15, show_default=True)
