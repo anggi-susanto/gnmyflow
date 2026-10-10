@@ -76,9 +76,25 @@ def sign_in_command(chrome: Path, profile: Path, url: str = FLOW_URL) -> list[st
     return [*_base_args(chrome, profile), url]
 
 
+#: Keep the page running at full speed while its window sits behind other windows or is
+#: minimized. Without these, Windows' occlusion tracking marks the page hidden: animation
+#: frames stop (so UI actions stall) and the page's own timers, such as Flow's 5 s video
+#: status poll, are throttled. They change scheduling only; pages cannot read them.
+KEEP_RUNNING_FLAGS = (
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    "--disable-background-timer-throttling",
+)
+
+
 def automation_command(chrome: Path, profile: Path, port: int, url: str = FLOW_URL) -> list[str]:
-    """Arguments for Chrome on ``profile`` with a loopback debugging port and no other flags."""
-    return [*_base_args(chrome, profile), f"--remote-debugging-port={port}", url]
+    """Chrome on ``profile`` with a loopback debugging port and the keep-running flags."""
+    return [
+        *_base_args(chrome, profile),
+        f"--remote-debugging-port={port}",
+        *KEEP_RUNNING_FLAGS,
+        url,
+    ]
 
 
 def run_sign_in(chrome: Path, profile: Path, url: str = FLOW_URL) -> int:
