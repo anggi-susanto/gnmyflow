@@ -18,11 +18,14 @@ StudioWright drives Google Flow's web UI in the user's own signed-in Chrome. It 
 - Images: `flow_generate_image(prompt, model, aspect, count, refs)`.
   - The default is Nano Banana 2.1 at 16:9 and x1. Images cost no credits.
   - `refs` takes local file paths or media ids. Local files are uploaded once and reused by content afterwards.
-- Video: `flow_generate_video(prompt, model, mode, start, end, refs, aspect, resolution, duration, count)`.
-  - Video costs credits, so confirm with the user before making several clips or using Veo Quality.
+- Video: `flow_generate_video(prompt, model, mode, start, end, refs, aspect, resolution, duration, count, size, max_credits, dry_run)`.
+  - Video costs credits. Use `dry_run=true` first to learn Flow's price for free, and pass `max_credits` so a call never spends more than agreed.
+  - Prices seen: Omni 360p 4 s = 4, Veo Lite = 10, Veo Fast = 20, Veo Quality = 100 credits.
+  - Confirm with the user before making several clips or using Veo Quality.
   - `mode="frames"`: optional `start` and `end` frames (file or media id). With neither, it is text-to-video.
   - `mode="ingredients"`: `refs` are reference images.
   - `resolution` (360p/720p) and `duration` (4/6/8/10 s) apply to Omni only.
+- `size` downloads Flow's own other sizes: images `2K` (upscaled); clips `1080p` from a 720p clip, `720p` from a 360p clip, `270p` (GIF).
 - `flow_options` lists every model and option.
 
 ## Results

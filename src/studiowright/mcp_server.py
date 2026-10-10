@@ -121,6 +121,7 @@ async def flow_generate_video(
     out_dir: str | None = None,
     size: str | None = None,
     max_credits: int | None = None,
+    dry_run: bool = False,
     profile: str | None = None,
 ) -> dict[str, Any]:
     """Generate a video clip in Google Flow (costs credits) and save it locally.
@@ -130,6 +131,7 @@ async def flow_generate_video(
     resolution and duration apply to Omni only. size: download size as Flow labels it
     (e.g. "1080p" upscaled from a 720p clip, "270p" GIF); default original.
     max_credits: refuse before submitting if Flow's stated price is higher.
+    dry_run: set everything up and return Flow's price without submitting (free).
     Returns file paths, media ids and the credits Flow stated.
     """
     if end and not start:
@@ -140,7 +142,16 @@ async def flow_generate_video(
         raise ValueError("start/end frames need mode 'frames'")
     options = VideoOptions.build(model, mode, aspect, resolution, duration, count)
     request = VideoRequest(
-        prompt, options, start, end, tuple(refs or ()), project, _out(out_dir), size, max_credits
+        prompt,
+        options,
+        start,
+        end,
+        tuple(refs or ()),
+        project,
+        _out(out_dir),
+        size,
+        max_credits,
+        dry_run,
     )
     async with Studio(_profile(profile)) as studio:
         return await studio.video(request)

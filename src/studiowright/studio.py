@@ -76,6 +76,8 @@ class VideoRequest:
     size: str | None = None
     #: Refuse to submit when Flow's stated price is higher than this.
     max_credits: int | None = None
+    #: Set everything up and report Flow's price, but do not submit.
+    dry_run: bool = False
 
 
 def _unique(path: Path) -> Path:
@@ -393,6 +395,17 @@ class Studio:
             if options.mode is VideoMode.FRAMES and request.start:
                 await flow.set_start_frame(frame_ids[0])
             credits = await flow.apply_video_options(options)
+            if request.dry_run:
+                result = {
+                    "job_id": job_id,
+                    "project_id": project_id,
+                    "credits": credits,
+                    "submitted": False,
+                    "seconds": round(time.time() - started, 1),
+                }
+                self.store.update_job(job_id, status="dry-run", result=result, finished=time.time())
+                await flow.reset()
+                return result
             if (
                 request.max_credits is not None
                 and credits is not None

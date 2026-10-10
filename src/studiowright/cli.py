@@ -140,6 +140,30 @@ def window_hide(obj: dict[str, str]) -> None:
     _run(lambda studio: studio.window(visible=False), obj["profile"])
 
 
+@main.command()
+@click.pass_obj
+def stop(obj: dict[str, str]) -> None:
+    """Close StudioWright's Chrome for this profile (e.g. before `sw auth login`)."""
+    port = chrome.debug_port(obj["profile"])
+    if not chrome.endpoint_version(port):
+        click.echo("StudioWright's Chrome is not running.")
+        return
+
+    async def close() -> None:
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as playwright:
+            browser = await playwright.chromium.connect_over_cdp(f"http://127.0.0.1:{port}")
+            cdp = await browser.new_browser_cdp_session()
+            await cdp.send("Browser.close")
+
+    try:
+        asyncio.run(close())
+    except PlaywrightError:
+        pass  # the connection drops as Chrome closes
+    click.echo("StudioWright's Chrome is closed.")
+
+
 # --- projects -----------------------------------------------------------------------------
 @main.group()
 def project() -> None:
@@ -297,6 +321,7 @@ def image(
     help="Download size as Flow labels it, e.g. 2K (image) or 1080p (video); default original.",
 )
 @click.option("--max-credits", type=int, help="Do not submit if Flow's stated price is higher.")
+@click.option("--dry-run", is_flag=True, help="Show Flow's credit price; submit nothing.")
 @click.option("--json", "as_json", is_flag=True, help="Print JSON.")
 @click.pass_obj
 def video(
@@ -315,6 +340,7 @@ def video(
     out: Path | None,
     size: str | None,
     max_credits: int | None,
+    dry_run: bool,
     as_json: bool,
 ) -> None:
     """Generate a video clip from PROMPT."""
@@ -328,8 +354,14 @@ def video(
         options = VideoOptions.build(model, mode, aspect, resolution, int(duration), int(count))
     except OptionError as exc:
         raise click.BadParameter(str(exc)) from exc
-    request = VideoRequest(prompt, options, start, end, refs, project, out, size, max_credits)
-    _emit(_run(lambda studio: studio.video(request), obj["profile"]), as_json)
+    request = VideoRequest(
+        prompt, options, start, end, refs, project, out, size, max_credits, dry_run
+    )
+    result = _run(lambda studio: studio.video(request), obj["profile"])
+    if dry_run and not as_json:
+        click.echo(f"Flow's price: {result.get('credits')} credits (nothing was submitted)")
+        return
+    _emit(result, as_json)
 
 
 @main.command()
