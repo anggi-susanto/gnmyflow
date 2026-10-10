@@ -25,7 +25,7 @@ from studiowright.flow.options import ImageOptions, OptionError, VideoOptions
 from studiowright.studio import ImageRequest, VideoRequest
 
 IMAGE_KEYS = {"id", "kind", "prompt", "model", "aspect", "count", "refs", "project", "size", "out"}
-VIDEO_KEYS = IMAGE_KEYS | {"mode", "start", "end", "resolution", "duration"}
+VIDEO_KEYS = IMAGE_KEYS | {"mode", "start", "end", "resolution", "duration", "max_credits"}
 
 
 class BatchError(ValueError):
@@ -124,6 +124,7 @@ def build_request(
         job.get("project"),
         out,
         job.get("size"),
+        job.get("max_credits"),
     )
 
 

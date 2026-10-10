@@ -65,3 +65,15 @@ def test_unusual_activity_starts_cooldown(store: Store) -> None:
         governor.reserve(now=1300)
     assert governor.reserve(now=1601) == 0
     assert governor.status()["refusals"] == 1
+
+
+def test_mark_interrupted_only_touches_unfinished_jobs(store: Store) -> None:
+    running = store.create_job("video", "default", "p1", {})
+    store.update_job(running, status="running")
+    done = store.create_job("image", "default", "p1", {})
+    store.update_job(done, status="done")
+    other = store.create_job("image", "other", "p1", {})
+    assert store.mark_interrupted("default") == 1
+    assert store.job(running)["status"] == "interrupted"
+    assert store.job(done)["status"] == "done"
+    assert store.job(other)["status"] == "queued"

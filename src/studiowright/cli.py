@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -71,9 +72,14 @@ def _emit(result: dict[str, Any], as_json: bool) -> None:
     show_default=True,
     help="Signed-in Chrome profile to use.",
 )
+@click.option("-v", "--verbose", is_flag=True, help="Log each step to stderr.")
 @click.pass_context
-def main(ctx: click.Context, profile: str) -> None:
+def main(ctx: click.Context, profile: str, verbose: bool) -> None:
     """StudioWright: Google Flow from the terminal. Unofficial; not affiliated with Google."""
+    if verbose:
+        logging.basicConfig(
+            level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S"
+        )
     ctx.obj = {"profile": profile}
 
 
@@ -290,6 +296,7 @@ def image(
     "--size",
     help="Download size as Flow labels it, e.g. 2K (image) or 1080p (video); default original.",
 )
+@click.option("--max-credits", type=int, help="Do not submit if Flow's stated price is higher.")
 @click.option("--json", "as_json", is_flag=True, help="Print JSON.")
 @click.pass_obj
 def video(
@@ -307,6 +314,7 @@ def video(
     project: str | None,
     out: Path | None,
     size: str | None,
+    max_credits: int | None,
     as_json: bool,
 ) -> None:
     """Generate a video clip from PROMPT."""
@@ -320,7 +328,7 @@ def video(
         options = VideoOptions.build(model, mode, aspect, resolution, int(duration), int(count))
     except OptionError as exc:
         raise click.BadParameter(str(exc)) from exc
-    request = VideoRequest(prompt, options, start, end, refs, project, out, size)
+    request = VideoRequest(prompt, options, start, end, refs, project, out, size, max_credits)
     _emit(_run(lambda studio: studio.video(request), obj["profile"]), as_json)
 
 

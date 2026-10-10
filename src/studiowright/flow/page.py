@@ -8,12 +8,12 @@ listeners, to learn ids, signed URLs and status.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from playwright.async_api import FileChooser, Locator, Page, Request, Response
 
@@ -22,6 +22,8 @@ from studiowright.flow import batchexecute as be
 from studiowright.flow import replies
 from studiowright.flow import selectors as s
 from studiowright.flow.options import ImageOptions, VideoOptions, count_pattern, duration_pattern
+
+log = logging.getLogger("studiowright.flow")
 
 FLOW_ROOT = "https://flow.google.com/"
 IMAGE_RPC = "ogiZ0b"
@@ -69,18 +71,25 @@ class ReplyWatch:
     """Collect the bodies of selected RPC replies while it is attached to a page."""
 
     def __init__(
-        self, page: Page, rpcs: Sequence[str], on_request: Callable[[str], None] | None = None
+        self,
+        page: Page,
+        rpcs: Sequence[str] | None,
+        on_request: Callable[[str], None] | None = None,
     ) -> None:
         self.page = page
-        self.rpcs = set(rpcs)
+        #: None means every batchexecute reply.
+        self.rpcs = set(rpcs) if rpcs is not None else None
         self.on_request_cb = on_request
         self.bodies: list[tuple[str, int, str]] = []
         self._tasks: list[asyncio.Future[None]] = []
         self.changed = asyncio.Event()
 
+    def _wanted(self, rpc: str) -> bool:
+        return bool(rpc) and (self.rpcs is None or rpc in self.rpcs)
+
     def _on_request(self, request: Request) -> None:
         rpc = _rpc(request.url)
-        if rpc in self.rpcs and self.on_request_cb:
+        if self._wanted(rpc) and self.on_request_cb:
             self.on_request_cb(rpc)
 
     async def _read(self, response: Response, rpc: str) -> None:
@@ -93,7 +102,7 @@ class ReplyWatch:
 
     def _on_response(self, response: Response) -> None:
         rpc = _rpc(response.url)
-        if rpc in self.rpcs:
+        if self._wanted(rpc):
             self._tasks.append(asyncio.ensure_future(self._read(response, rpc)))
 
     def __enter__(self) -> ReplyWatch:
@@ -257,7 +266,8 @@ class FlowPage:
         await self.page.keyboard.press("Escape")
         await self.page.wait_for_timeout(250)
 
-    async def apply_video_options(self, options: VideoOptions) -> None:
+    async def apply_video_options(self, options: VideoOptions) -> int | None:
+        """Set every video option; returns the credit price the pane shows, if readable."""
         pane = await self._settings_pane()
         await self._radio(pane, icon=s.MODE_VIDEO)
         await self._radio(pane, icon=options.mode.icon)
@@ -268,8 +278,11 @@ class FlowPage:
         if options.duration:
             await self._radio(pane, text=duration_pattern(options.duration))
         await self._radio(pane, text=count_pattern(options.count))
+        await self.page.wait_for_timeout(200)
+        price = credit_price(await pane.inner_text())
         await self.page.keyboard.press("Escape")
         await self.page.wait_for_timeout(250)
+        return price
 
     # --- media ------------------------------------------------------------------------
     async def _open_file_chooser(self) -> FileChooser:
@@ -294,6 +307,7 @@ class FlowPage:
         self, files: Sequence[Path], timeout_s: float = 90
     ) -> list[replies.UploadResult]:
         """Upload files through one file chooser, in the order given."""
+        log.info("upload %d file(s)", len(files))
         with ReplyWatch(self.page, [UPLOAD_RPC]) as watch:
             chooser = await self._open_file_chooser()
             await chooser.set_files([str(f) for f in files])
@@ -353,16 +367,19 @@ class FlowPage:
             await asyncio.sleep(0.05)
 
     async def attach_reference(self, media_id: str) -> None:
+        log.info("attach reference %s", media_id)
         before = await self.attachments()
         await self._tile_menu(media_id, s.MENU_ADD_TO_PROMPT)
         await self._wait_attachments(before + 1)
 
     async def set_start_frame(self, media_id: str) -> None:
         """Animate from this image: switches to video / Frames with it as the start frame."""
+        log.info("start frame %s", media_id)
         await self._tile_menu(media_id, s.MENU_ANIMATE)
         await self._wait_attachments(1)
 
     async def set_end_frame(self, media_id: str) -> None:
+        log.info("end frame %s", media_id)
         img = await self._media_img(media_id)
         token = _asb_token(await img.get_attribute("src") or "")
         if not token:
@@ -400,6 +417,7 @@ class FlowPage:
     ) -> list[replies.ImageResult]:
         with ReplyWatch(self.page, [IMAGE_RPC]) as watch:
             await self._type_and_submit(prompt)
+            log.info("image submitted; waiting for Flow's reply")
             deadline = time.monotonic() + timeout_s
             while not watch.bodies and time.monotonic() < deadline:
                 await watch.wait(1.0)
@@ -419,52 +437,92 @@ class FlowPage:
         return results
 
     async def generate_video(self, prompt: str, timeout_s: float = 600) -> list[VideoClip]:
-        submitted: dict[str, Any] = {}
-        with ReplyWatch(self.page, [*VIDEO_SUBMIT_RPCS, *VIDEO_STATUS_RPCS]) as watch:
+        """Submit and follow the clip(s) until their signed URLs arrive.
+
+        Flow's submit RPC differs per mode and can change, so the new clips are recognised
+        by shape: any record of this project that appears queued or running after the click.
+        """
+        with ReplyWatch(self.page, None) as watch:
             await self._type_and_submit(prompt)
+            log.info("video submitted; following the project's replies")
             deadline = time.monotonic() + timeout_s
-            clips: dict[str, replies.VideoRecord] = {}
+            new_ids: set[str] = set()
+            records: dict[str, replies.VideoRecord] = {}
             urls: dict[str, dict[str, str]] = {}
             seen = 0
+            finished_at: float | None = None
             while time.monotonic() < deadline:
                 await watch.wait(2.0)
-                for rpc_id, status, text in watch.bodies[seen:]:
+                for rpc_id, _status, text in watch.bodies[seen:]:
                     seen += 1
                     try:
                         payload = be.parse_reply(text, rpc_id)
                     except be.RpcError as exc:
-                        if rpc_id in VIDEO_SUBMIT_RPCS:
-                            _raise_for_refusal(exc)
+                        if rpc_id in VIDEO_SUBMIT_RPCS or not new_ids:
+                            log.info("refusal in %s: %s", rpc_id, exc)
+                            if any(UNUSUAL in reason for reason in exc.reasons):
+                                raise UnusualActivity(str(exc)) from exc
+                            if rpc_id in VIDEO_SUBMIT_RPCS:
+                                raise GenerationRefused(str(exc)) from exc
                         continue
                     except be.MissingReply:
                         continue
-                    records = replies.video_records(payload, self.project_id)
-                    if rpc_id in VIDEO_SUBMIT_RPCS and "ids" not in submitted:
-                        submitted["ids"] = {r.media_id for r in records}
-                        if not submitted["ids"]:
-                            raise FlowError(f"{rpc_id} reply named no new clip (HTTP {status})")
-                    for record in records:
-                        if record.media_id in submitted.get("ids", ()):
-                            clips[record.media_id] = record
+                    for record in replies.video_records(payload, self.project_id):
+                        active = record.status in (replies.STATUS_QUEUED, replies.STATUS_RUNNING)
+                        if record.media_id not in new_ids and (
+                            active or rpc_id in VIDEO_SUBMIT_RPCS
+                        ):
+                            new_ids.add(record.media_id)
+                            log.info("clip %s accepted via %s", record.media_id, rpc_id)
+                        if record.media_id in new_ids:
+                            previous = records.get(record.media_id)
+                            if previous is None or previous.status != record.status:
+                                log.info("clip %s status %s", record.media_id, record.status)
+                            records[record.media_id] = record
                     for media_id, found in replies.media_urls(payload).items():
                         urls.setdefault(media_id, {}).update(found)
-                ids = submitted.get("ids")
-                if ids and all("video" in urls.get(i, {}) for i in ids):
+                done = bool(new_ids) and all(
+                    records.get(i) and records[i].status == replies.STATUS_DONE for i in new_ids
+                )
+                if done and finished_at is None:
+                    finished_at = time.monotonic()
+                if (
+                    finished_at is not None
+                    and time.monotonic() - finished_at > 8
+                    and not all("video" in urls.get(i, {}) for i in new_ids)
+                ):
+                    # Some modes never fetch the finished clip's URL on their own; opening
+                    # the edit view makes the page fetch fresh URLs for every medium.
+                    log.info("clip done; fetching its URL through the edit view")
+                    for media_id, found in (await self.fresh_media_urls()).items():
+                        urls.setdefault(media_id, {}).update(found)
+                if new_ids and all("video" in urls.get(i, {}) for i in new_ids):
+                    log.info("clip URLs received")
                     return [
                         VideoClip(
                             i,
                             urls[i]["video"],
                             urls[i].get("image"),
-                            clips[i].workflow_id if i in clips else None,
+                            records[i].workflow_id if i in records else urls[i].get("workflow"),
                         )
-                        for i in sorted(ids)
+                        for i in sorted(new_ids)
                     ]
-                failed = [r for r in clips.values() if r.status not in (None, 2, 3, 6)]
+                failed = [
+                    r
+                    for r in records.values()
+                    if r.status
+                    not in (
+                        None,
+                        replies.STATUS_QUEUED,
+                        replies.STATUS_RUNNING,
+                        replies.STATUS_DONE,
+                    )
+                ]
                 if failed:
                     raise GenerationRefused(
                         f"Flow reported the clip failed (status {failed[0].status})"
                     )
-        pending = " ".join(sorted(submitted.get("ids", ())))
+        pending = " ".join(sorted(new_ids))
         hint = f"; it may still finish: sw download {pending}" if pending else ""
         raise FlowError(f"the clip was not ready within {timeout_s:.0f} s{hint}")
 
@@ -545,6 +603,17 @@ class FlowPage:
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(body)
         return target
+
+
+_PRICE = re.compile(
+    r"(\d+)\s*(?:kredi|credits?|crédits?|créditos?|Credits?|Kredite?)", re.IGNORECASE
+)
+
+
+def credit_price(pane_text: str) -> int | None:
+    """The credit cost the settings pane states, e.g. "uses 12 credits" / "12 kredi"."""
+    matches = _PRICE.findall(pane_text)
+    return int(matches[-1]) if matches else None
 
 
 def suffix_for(body_start: bytes, default: str) -> str:

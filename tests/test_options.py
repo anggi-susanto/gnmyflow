@@ -66,3 +66,17 @@ def test_duration_pattern_is_locale_proof(text: str, matches: bool) -> None:
 def test_count_pattern_is_exact() -> None:
     assert o.count_pattern(2).match(" x2 ")
     assert not o.count_pattern(2).match("x20")
+
+
+@pytest.mark.parametrize(
+    ("text", "price"),
+    [
+        ("x1 x2 x3 x4 Üretme işlemi için 4 kredi kullanılır", 4),
+        ("4s 6s 8s 10s Generating will use 12 credits", 12),
+        ("no price here 8s 720p", None),
+    ],
+)
+def test_credit_price(text: str, price: int | None) -> None:
+    from studiowright.flow.page import credit_price
+
+    assert credit_price(text) == price

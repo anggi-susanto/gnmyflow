@@ -167,6 +167,15 @@ class Store:
         with self.connect() as db:
             db.execute(f"UPDATE jobs SET {columns} WHERE id = ?", (*fields.values(), job_id))
 
+    def mark_interrupted(self, profile: str) -> int:
+        with self.connect() as db:
+            cursor = db.execute(
+                "UPDATE jobs SET status = 'interrupted', finished = ? "
+                "WHERE profile = ? AND status IN ('queued', 'running')",
+                (time.time(), profile),
+            )
+        return cursor.rowcount
+
     def job(self, job_id: str) -> sqlite3.Row | None:
         with self.connect() as db:
             return db.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()

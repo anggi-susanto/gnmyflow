@@ -74,6 +74,8 @@ class VideoRequest:
     out_dir: Path | None = None
     #: Flow's download size token (e.g. ``2K`` or ``1080p``); None keeps the original.
     size: str | None = None
+    #: Refuse to submit when Flow's stated price is higher than this.
+    max_credits: int | None = None
 
 
 def _unique(path: Path) -> Path:
@@ -121,6 +123,8 @@ class Studio:
 
     async def _locked(self) -> None:
         await asyncio.to_thread(self._lock.acquire)
+        # Only one job runs per profile, so any job still marked running died mid-way.
+        self.store.mark_interrupted(self.profile)
 
     # --- projects ---------------------------------------------------------------------
     def default_project(self) -> str | None:
@@ -388,7 +392,16 @@ class Studio:
             await flow.reset()
             if options.mode is VideoMode.FRAMES and request.start:
                 await flow.set_start_frame(frame_ids[0])
-            await flow.apply_video_options(options)
+            credits = await flow.apply_video_options(options)
+            if (
+                request.max_credits is not None
+                and credits is not None
+                and credits > request.max_credits
+            ):
+                raise FlowError(
+                    f"Flow prices this clip at {credits} credits, above the limit of "
+                    f"{request.max_credits}; nothing was submitted"
+                )
             if options.mode is VideoMode.FRAMES and request.end:
                 await flow.set_end_frame(frame_ids[-1])
             if options.mode is VideoMode.INGREDIENTS:
@@ -409,6 +422,7 @@ class Studio:
                 "project_id": project_id,
                 "files": files,
                 "media_ids": [c.media_id for c in clips],
+                "credits": credits,
                 "seconds": round(time.time() - started, 1),
             }
             self.store.update_job(job_id, status="done", result=result, finished=time.time())
