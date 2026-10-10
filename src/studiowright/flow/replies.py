@@ -1,0 +1,150 @@
+"""Read Flow's own RPC replies, which StudioWright observes but never sends or alters.
+
+Replies are matched by shape, never by position alone, and every lookup tolerates
+missing pieces: Flow's payloads change without notice.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import re
+from collections.abc import Iterator
+from dataclasses import dataclass
+from typing import Any
+
+IMAGE_URL_PREFIX = "https://flow-content.google/image/"
+VIDEO_URL_PREFIX = "https://flow-content.google/video/"
+_UUID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+_URL_UUID = re.compile(r"/(?:image|video)/([0-9a-f-]{36})")
+
+#: Video record status codes seen on the wire.
+STATUS_QUEUED = 6
+STATUS_RUNNING = 2
+STATUS_DONE = 3
+
+
+def is_uuid(value: Any) -> bool:
+    return isinstance(value, str) and bool(_UUID.match(value))
+
+
+def walk(value: Any) -> Iterator[Any]:
+    """Every node of a nested list payload, depth first."""
+    yield value
+    if isinstance(value, list):
+        for item in value:
+            yield from walk(item)
+
+
+def strings(value: Any) -> list[str]:
+    return [node for node in walk(value) if isinstance(node, str)]
+
+
+def url_media_id(url: str) -> str | None:
+    match = _URL_UUID.search(url)
+    return match.group(1) if match else None
+
+
+@dataclass(frozen=True)
+class ImageResult:
+    media_id: str
+    url: str
+    width: int | None = None
+    height: int | None = None
+
+
+def image_results(payload: Any) -> list[ImageResult]:
+    """Generated images in an ``ogiZ0b`` reply: id, signed URL and size."""
+    # An image tuple holds a details list with the signed URL and, later in the same
+    # tuple, a bare [width, height] pair.
+    sizes: dict[str, tuple[int, int]] = {}
+    for node in walk(payload):
+        if not isinstance(node, list):
+            continue
+        pairs = [
+            child
+            for child in node
+            if isinstance(child, list)
+            and len(child) == 2
+            and all(isinstance(n, int) for n in child)
+        ]
+        if not pairs:
+            continue
+        for child in node:
+            if not isinstance(child, list):
+                continue
+            for url in (s for s in child if isinstance(s, str)):
+                media_id = url_media_id(url) if url.startswith(IMAGE_URL_PREFIX) else None
+                if media_id:
+                    sizes[media_id] = (pairs[-1][0], pairs[-1][1])
+    results: dict[str, ImageResult] = {}
+    for url in strings(payload):
+        if url.startswith(IMAGE_URL_PREFIX):
+            media_id = url_media_id(url)
+            if media_id and media_id not in results:
+                width, height = sizes.get(media_id, (None, None))
+                results[media_id] = ImageResult(media_id, url, width, height)
+    return list(results.values())
+
+
+@dataclass(frozen=True)
+class UploadResult:
+    media_id: str
+    name: str | None
+
+
+def upload_result(payload: Any) -> UploadResult:
+    """The new asset in a ``maseQ`` reply: its media id comes first."""
+    if not isinstance(payload, list) or not payload or not isinstance(payload[0], list):
+        raise ValueError("unexpected maseQ reply shape")
+    media_id = payload[0][0]
+    if not is_uuid(media_id):
+        raise ValueError("maseQ reply carries no media id")
+    name = None
+    with contextlib.suppress(IndexError, TypeError):
+        name = payload[1][3][0]
+    return UploadResult(media_id, name if isinstance(name, str) else None)
+
+
+@dataclass(frozen=True)
+class VideoRecord:
+    workflow_id: str
+    media_id: str
+    status: int | None
+    video_url: str | None
+    poster_url: str | None
+
+
+def video_records(payload: Any, project_id: str | None = None) -> list[VideoRecord]:
+    """Records ``[workflow_id, project_id, media_id, …]`` in submit, poll or result replies."""
+    found: dict[str, VideoRecord] = {}
+    for node in walk(payload):
+        if not (
+            isinstance(node, list)
+            and len(node) >= 6
+            and is_uuid(node[0])
+            and is_uuid(node[1])
+            and is_uuid(node[2])
+        ):
+            continue
+        if project_id and node[1] != project_id:
+            continue
+        status = None
+        details = node[5] if isinstance(node[5], list) else []
+        if len(details) > 8 and isinstance(details[8], list) and details[8]:
+            status = details[8][0] if isinstance(details[8][0], int) else None
+        video_url = next((s for s in strings(node) if s.startswith(VIDEO_URL_PREFIX)), None)
+        poster_url = next((s for s in strings(node) if s.startswith(IMAGE_URL_PREFIX)), None)
+        found[node[2]] = VideoRecord(node[0], node[2], status, video_url, poster_url)
+    return list(found.values())
+
+
+def media_urls(payload: Any) -> dict[str, dict[str, str]]:
+    """Every signed URL in a reply, keyed by media id: ``{"video": url, "image": url}``."""
+    urls: dict[str, dict[str, str]] = {}
+    for text in strings(payload):
+        for prefix, kind in ((VIDEO_URL_PREFIX, "video"), (IMAGE_URL_PREFIX, "image")):
+            if text.startswith(prefix):
+                media_id = url_media_id(text)
+                if media_id:
+                    urls.setdefault(media_id, {}).setdefault(kind, text)
+    return urls

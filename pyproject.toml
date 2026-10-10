@@ -9,6 +9,7 @@ requires-python = ">=3.12"
 authors = [{ name = "Umut Koçak" }]
 dependencies = [
     "click>=8.5.0",
+    "filelock>=4.1.0",
     "mcp[cli]>=2.3.0",
     "platformdirs>=4.12.4",
     "playwright>=1.63.0",
