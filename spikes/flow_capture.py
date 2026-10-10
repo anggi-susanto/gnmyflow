@@ -1,19 +1,24 @@
-"""Spike: record what Flow's own page sends while a person generates one image.
+"""Spike: record what Flow's own page sends while a person starts one generation.
 
 Usage:
-    uv run python spikes/flow_capture.py [--profile NAME] [--minutes 10]
+    uv run python spikes/flow_capture.py [--profile NAME] [--minutes 10] [--send]
 
 Chrome opens on the signed-in profile at flow.google.com. In that window, by hand:
-open (or create) a project, upload ONE small reference image, and generate ONE image (x1).
+open (or create) a project, upload ONE small reference image, and click generate once.
+
+By default the generation request is recorded and then DROPPED before it leaves the
+browser, so nothing is generated and no quota or credits are spent. Uploads go through,
+because the media id they return is needed later. Pass ``--send`` to let the generation
+through and record the reply as well.
+
 The script records:
 
 - every batchexecute request and response;
 - reCAPTCHA Enterprise calls (site key, action, token length; never the token);
 - the page's batchexecute session parameters.
 
-It stops a few seconds after the first image reply. The raw capture holds session
-material, so it is written only under the StudioWright data directory, and the
-console shows a redacted summary.
+The raw capture holds session material, so it is written only under the StudioWright
+data directory, and the console shows a redacted summary.
 """
 
 from __future__ import annotations
@@ -27,13 +32,15 @@ from collections import Counter
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-from playwright.async_api import Request, Response, async_playwright
+from playwright.async_api import Request, Response, Route, async_playwright
 
 from studiowright import paths
 from studiowright.browser import open_profile
 
 FLOW_URL = "https://flow.google.com/"
 IMAGE_RPC = "ogiZ0b"
+#: Image generate, then video text, frames, references and start+end frames.
+GENERATION_RPCS = frozenset({IMAGE_RPC, "YhhmEf", "eb1hJf", "MZZa6b", "nprQif"})
 
 #: Wraps grecaptcha.enterprise.execute as soon as it exists, to learn the site key and
 #: action names the page uses. Token values are never stored, only their length.
@@ -74,10 +81,35 @@ def rpc_ids(url: str) -> list[str]:
 
 
 class Recorder:
-    def __init__(self) -> None:
+    def __init__(self, *, drop_generation: bool) -> None:
         self.events: list[dict[str, Any]] = []
+        self.drop_generation = drop_generation
         self.image_reply_at: float | None = None
+        self.dropped_at: float | None = None
         self._pending: set[asyncio.Task[None]] = set()
+
+    async def on_route(self, route: Route) -> None:
+        request = route.request
+        ids = rpc_ids(request.url)
+        if self.drop_generation and GENERATION_RPCS.intersection(ids):
+            self.events.append(
+                {
+                    "t": time.time(),
+                    "kind": "dropped",
+                    "url": request.url,
+                    "rpcids": ids,
+                    "headers": await request.all_headers(),
+                    "post": request.post_data,
+                }
+            )
+            self.dropped_at = time.time()
+            await route.abort()
+            return
+        await route.continue_()
+
+    def done(self) -> bool:
+        finished = self.dropped_at or self.image_reply_at
+        return bool(finished and time.time() - finished > 5)
 
     def on_request(self, request: Request) -> None:
         url = request.url
@@ -134,28 +166,31 @@ def summarize(events: list[dict[str, Any]], hooks: list[dict[str, Any]]) -> str:
         elif hook.get("kind") == "recaptcha.token":
             lines.append(f"recaptcha token minted, length={hook.get('length')}")
     for event in events:
+        if event["kind"] == "dropped":
+            size = len(event["post"] or "")
+            lines.append(f"dropped before sending: {event['rpcids']} (body {size} chars)")
         if event["kind"] == "response" and IMAGE_RPC in event["rpcids"]:
             urls = len(re.findall(r"flow-content\.google", event["body"]))
             lines.append(f"{IMAGE_RPC} reply: HTTP {event['status']}, image urls: {urls}")
     return "\n".join(lines)
 
 
-async def run(profile: str, minutes: float) -> None:
+async def run(profile: str, minutes: float, send: bool) -> None:
     out_dir = paths.captures_dir()
     out_dir.mkdir(parents=True, exist_ok=True)
-    recorder = Recorder()
+    recorder = Recorder(drop_generation=not send)
     async with async_playwright() as playwright:
         context = await open_profile(playwright, paths.profile_dir(profile))
         await context.add_init_script(HOOK_JS)
+        await context.route("**/batchexecute*", recorder.on_route)
         context.on("request", recorder.on_request)
         context.on("response", recorder.on_response)
         page = context.pages[0] if context.pages else await context.new_page()
         await page.goto(FLOW_URL, wait_until="domcontentloaded")
-        print("Chrome is open. Upload ONE reference image and generate ONE image (x1).")
+        mode = "it will be SENT" if send else "it will be recorded and dropped (nothing is spent)"
+        print(f"Chrome is open. Upload ONE reference image and click generate once; {mode}.")
         deadline = time.time() + minutes * 60
-        while time.time() < deadline:
-            if recorder.image_reply_at and time.time() - recorder.image_reply_at > 5:
-                break
+        while time.time() < deadline and not recorder.done():
             await asyncio.sleep(1)
         hooks: list[dict[str, Any]] = []
         session: dict[str, Any] = {}
@@ -180,8 +215,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--profile", default=paths.DEFAULT_PROFILE)
     parser.add_argument("--minutes", type=float, default=10.0)
+    parser.add_argument("--send", action="store_true", help="let the generation through")
     args = parser.parse_args()
-    asyncio.run(run(args.profile, args.minutes))
+    asyncio.run(run(args.profile, args.minutes, args.send))
 
 
 if __name__ == "__main__":
