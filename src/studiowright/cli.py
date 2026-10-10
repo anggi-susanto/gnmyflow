@@ -377,10 +377,8 @@ def run(obj: dict[str, str], batch_file: Path, keep_going: bool) -> None:
         )
 
     summary = _run(make, obj["profile"])
-    click.echo(
-        f"{summary.done} done, {summary.failed} failed, {summary.skipped} skipped of {summary.total}",
-        err=True,
-    )
+    counts = f"{summary.done} done, {summary.failed} failed, {summary.skipped} skipped"
+    click.echo(f"{counts} of {summary.total}", err=True)
 
 
 # --- state --------------------------------------------------------------------------------
