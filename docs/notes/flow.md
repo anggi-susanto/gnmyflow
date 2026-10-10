@@ -1,0 +1,97 @@
+# Google Flow: how StudioWright drives it
+
+Notes from StudioWright's own probes on a test profile (October 2026). They describe what
+the code relies on, so a Flow update can be traced quickly. Flow changes often; re-measure
+before trusting a detail here.
+
+## Browser
+
+- StudioWright starts the installed Chrome on a dedicated user-data directory with
+  `--remote-debugging-port` on loopback (port `9300 + crc32(profile) % 90`) and attaches
+  with Playwright's `connect_over_cdp`. Chrome is not launched by Playwright, so
+  `navigator.webdriver` stays false and no automation switches are added.
+- A minimized or occluded window stops rendering, which stalls Flow. Chrome gets
+  `--disable-backgrounding-occluded-windows`, `--disable-renderer-backgrounding` and
+  `--disable-background-timer-throttling`, and `sw window hide` moves the window
+  off-screen (CDP `Browser.setWindowBounds`) instead of minimizing it.
+- Playwright's download events do not fire on an attached browser. Downloads are captured
+  with CDP `Browser.setDownloadBehavior` plus `downloadWillBegin` / `downloadProgress`.
+
+## Safety decision
+
+Flow protects generation and upload calls with reCAPTCHA Enterprise. A token minted from
+the page was refused on the first try (`PUBLIC_ERROR_UNUSUAL_ACTIVITY`), and rewriting a
+request the page signed would be circumvention. So:
+
+- every token-bearing call is made by Flow's own UI, after StudioWright types and clicks;
+- StudioWright never mints, replays, rewrites or forges such requests, never uses
+  `page.route`, and never exports cookies;
+- it only reads Flow's replies (`page.on("response")`) to learn ids and download URLs;
+- token-free calls the page itself makes (project creation, `jHPbke`) may be sent from
+  the page with its own session values.
+
+## Wire facts StudioWright reads
+
+- **batchexecute.** `POST /_/…/data/batchexecute` with
+  `f.req=[[["<rpcid>", "<inner JSON as a string>", null, "generic"]]]&at=<csrf>`.
+  Replies start with `)]}'` and carry rows `["wrb.fr", "<rpcid>", "<payload JSON>", …]`.
+- **Session values.** `WIZ_global_data.FdrFJe` = `f.sid`, `cfb2h` = `bl`, `SNlM0e` = `at`.
+- **Refusals arrive as HTTP 200.** The payload is null and an `ErrorInfo` reason is
+  attached; code 7 with `PUBLIC_ERROR_UNUSUAL_ACTIVITY` starts a 30-minute cooldown.
+- **RPCs seen.**
+
+  | RPC | Role |
+  | --- | --- |
+  | `ogiZ0b` | image generation (one held reply, no polling) |
+  | `maseQ` | upload |
+  | `YhhmEf` / `eb1hJf` / `MZZa6b` / `nprQif` | video: text / start frame / ingredients / start+end |
+  | `jwpduf` | video status poll (every ~5 s) |
+  | `as29s` | fresh signed URLs (fetched by the edit view) |
+  | `jHPbke` | project creation (token-free) |
+
+- **Image reply.** One tuple per image: `[media_id, _, workflow_id, …, [DETAILS, _, [w, h]]]`
+  with a signed `flow-content.google` URL in DETAILS.
+- **Video record.** `[media_id, project_id, workflow_id, …, DETAILS]`, status at
+  `DETAILS[8][0]`: 6 queued, 2 running, 3 done. New clips are recognized by this shape in
+  any reply, because ingredients mode never fetches the finished URL on its own.
+- **Fresh URLs.** Opening `/project/<pid>/edit/<workflow_id>` makes the page fetch fresh
+  signed URLs for the project's media.
+
+## UI facts
+
+- Icons are Material ligatures (`mat-icon` text), which do not change with the UI
+  language, so selectors use them: `more_vert` → `add_2` attaches a reference,
+  `motion_blur` (Animate) sets a start frame, `crop_free` / `chrome_extension` pick the
+  frames / ingredients mode.
+- Settings live in an overlay pane with radio groups (aspect, count, model, duration,
+  resolution); the pane sometimes needs a second click to open.
+- The end frame is set from the empty chip → the asset whose `/asb/<token>` matches the
+  grid image → "add to prompt".
+- Upload: Ctrl+U after blurring the composer, with the toolbar's add → upload as a
+  fallback. Do not reload after an upload: a reloaded grid lags one upload behind.
+- Sized downloads come from the edit view's download menu; entries are matched by their
+  leading token (1K, 2K, 270p, 360p, 720p, 1080p, 4K). The button is disabled until the
+  medium has loaded.
+
+## Prices and pacing
+
+| Job | Flow credits |
+| --- | --- |
+| Image (any Nano Banana model) | 0 (daily quota) |
+| Omni Flash, 360p, 4 s | 4 |
+| Veo Lite / Fast / Quality | 10 / 20 / 100 |
+
+Prices are read from Flow's own settings pane before submitting (`--dry-run`,
+`--max-credits`). Submits are spaced 20 s apart plus 0-6 s of jitter per profile, across
+processes (SQLite).
+
+## Measured times (warm tab)
+
+| Job | Time |
+| --- | --- |
+| Image with one reference (upload, attach, generate, download) | 18-22 s |
+| Nano Banana Pro 9:16 with a new upload | 27 s |
+| 4 s clip with start and end frames | 30 s |
+| Ingredients clip | 51 s |
+| Veo Lite 9:16 | 61 s |
+| 720p clip saved as 1080p | 70 s |
