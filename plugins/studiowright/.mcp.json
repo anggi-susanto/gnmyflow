@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "studiowright": {
+      "command": "${STUDIOWRIGHT_BIN:-sw}",
+      "args": ["mcp"],
+      "timeout": 900000
+    }
+  }
+}

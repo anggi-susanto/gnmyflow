@@ -359,5 +359,13 @@ def pace(obj: dict[str, str]) -> None:
     click.echo(f"unusual-activity refusals so far: {status['refusals']}")
 
 
+@main.command()
+def mcp() -> None:
+    """Run the MCP server on stdio (for Claude Code and other agents)."""
+    from studiowright.mcp_server import run
+
+    run()
+
+
 if __name__ == "__main__":  # pragma: no cover
     main()
