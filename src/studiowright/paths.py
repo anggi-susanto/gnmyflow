@@ -30,6 +30,23 @@ def profile_dir(name: str = DEFAULT_PROFILE) -> Path:
     return home() / "profiles" / name
 
 
+def output_dir() -> Path:
+    """Where generated media is saved unless a command says otherwise."""
+    override = os.environ.get("STUDIOWRIGHT_OUTPUT", "").strip()
+    if override:
+        return Path(override)
+    return Path.home() / "Downloads" / APP_NAME
+
+
+def staging_dir() -> Path:
+    """Uniquely named copies of local files, made just before they are uploaded."""
+    return home() / "staging"
+
+
+def locks_dir() -> Path:
+    return home() / "locks"
+
+
 def captures_dir() -> Path:
     """Raw wire captures. They hold session material, so they never leave this directory."""
     return home() / "captures"

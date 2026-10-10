@@ -1,0 +1,53 @@
+"""Locale-proof handles for Flow's UI: icon ligatures, roles, component tags and classes.
+
+Visible text and aria-labels are translated, so they are never used except for tokens
+Flow does not translate (model names, ``x2``, ``720p``, ``2K``). Measured on
+flow.google.com on 2026-10-10.
+"""
+
+from __future__ import annotations
+
+
+def icon(name: str) -> str:
+    """Anything containing the Material icon ligature ``name``."""
+    return f":has(mat-icon:text-is('{name}'))"
+
+
+READY = ".settings-trigger-button"
+OVERLAY = ".cdk-overlay-pane"
+SETTINGS_PANE = f"{OVERLAY}:has([role='radiogroup'])"
+RADIO = "[role='radio']"
+MENU_ITEM = "[role='menuitem']"
+MODEL_MENU_BUTTON = f"button{icon('arrow_drop_down')}"
+
+BOX = "flow-prompt-box"
+COMPOSER = f"{BOX} [contenteditable='true']"
+BOX_CLEAR = f"{BOX} button{icon('close')}"
+SUBMIT = f"{BOX} button{icon('arrow_forward')}"
+BOUND_CHIP = f"{BOX} button.chip-container:has(img)"
+MENTION_CHIP = f"{BOX} .mention-chip"
+EMPTY_SLOT = f"{BOX} button.empty-chip"
+
+PICKER_ITEM = f"{OVERLAY} .asset-item"
+PICKER_ADD = f"{OVERLAY} button.detail-add-to-prompt-btn"
+
+IMAGE_TILE = "flow-image-tile"
+VIDEO_TILE = "flow-video-tile"
+TILE_MENU = f"button{icon('more_vert')}"
+MENU_ADD_TO_PROMPT = f"{OVERLAY} {MENU_ITEM}{icon('add_2')}"
+MENU_ANIMATE = f"{OVERLAY} {MENU_ITEM}{icon('motion_blur')}"
+MENU_DOWNLOAD = f"{OVERLAY} {MENU_ITEM}{icon('download')}"
+#: The page toolbar's add button (not the one inside the prompt box) and its upload entry.
+TOOLBAR_ADD = f"xpath=//button[.//mat-icon[normalize-space()='add']][not(ancestor::{BOX})]"
+MENU_UPLOAD = f"{OVERLAY} {MENU_ITEM}{icon('upload')}"
+
+COOKIE_REJECT = "button.glue-cookie-notification-bar__reject"
+DIALOG_CLOSE = f"[role='dialog'] button{icon('close')}"
+CREDITS_WARNING = "button.prompt-warning-button"
+
+MODE_IMAGE = "image"
+MODE_VIDEO = "videocam"
+
+
+def media_image(media_id: str) -> str:
+    return f"img[data-media-id='{media_id}']"

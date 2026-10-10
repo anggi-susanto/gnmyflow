@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import Any
 
 from playwright.async_api import Browser, BrowserContext, Page, Playwright
 
@@ -35,6 +36,51 @@ class ChromeSession:
     async def detach(self) -> None:
         """Disconnect Playwright. Chrome and its tabs stay open."""
         await self.browser.close()
+
+
+#: Off-screen but not minimized: Chrome keeps rendering the page there.
+OFFSCREEN_LEFT = -3000
+ONSCREEN_LEFT = 60
+
+
+async def _window_bounds(session: ChromeSession, page: Page) -> tuple[Any, int, dict[str, Any]]:
+    cdp = await session.context.new_cdp_session(page)
+    window = await cdp.send("Browser.getWindowForTarget")
+    return cdp, window["windowId"], window["bounds"]
+
+
+async def ensure_rendering(session: ChromeSession, page: Page) -> None:
+    """A minimized window freezes the page; un-minimize it off-screen instead."""
+    cdp, window_id, bounds = await _window_bounds(session, page)
+    try:
+        if bounds.get("windowState") == "minimized":
+            await cdp.send(
+                "Browser.setWindowBounds",
+                {"windowId": window_id, "bounds": {"windowState": "normal"}},
+            )
+            await cdp.send(
+                "Browser.setWindowBounds",
+                {"windowId": window_id, "bounds": {"left": OFFSCREEN_LEFT, "top": 40}},
+            )
+    finally:
+        await cdp.detach()
+
+
+async def place_window(session: ChromeSession, page: Page, *, visible: bool) -> None:
+    """Show the StudioWright window on screen, or keep it running off-screen."""
+    cdp, window_id, bounds = await _window_bounds(session, page)
+    try:
+        if bounds.get("windowState") != "normal":
+            await cdp.send(
+                "Browser.setWindowBounds",
+                {"windowId": window_id, "bounds": {"windowState": "normal"}},
+            )
+        left = ONSCREEN_LEFT if visible else OFFSCREEN_LEFT
+        await cdp.send(
+            "Browser.setWindowBounds", {"windowId": window_id, "bounds": {"left": left, "top": 40}}
+        )
+    finally:
+        await cdp.detach()
 
 
 async def attach(playwright: Playwright, profile: str = paths.DEFAULT_PROFILE) -> ChromeSession:
