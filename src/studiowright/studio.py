@@ -331,12 +331,14 @@ class Studio:
                 if real_suffix != default_suffix:
                     target = target.rename(target.with_suffix(real_suffix))
             files.append(str(target))
+            # The content hash lets a copy of this file (say, a chosen frame) be passed back
+            # as a reference without uploading it again.
             self.store.add_asset(
                 flow.project_id,
                 media_id,
                 "video" if default_suffix == ".mp4" else "image",
                 target.name,
-                None,
+                file_sha256(target),
                 "generated",
             )
         return files
