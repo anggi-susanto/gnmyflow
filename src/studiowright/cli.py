@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import time
@@ -157,10 +158,8 @@ def stop(obj: dict[str, str]) -> None:
             cdp = await browser.new_browser_cdp_session()
             await cdp.send("Browser.close")
 
-    try:
+    with contextlib.suppress(PlaywrightError):  # the connection drops as Chrome closes
         asyncio.run(close())
-    except PlaywrightError:
-        pass  # the connection drops as Chrome closes
     click.echo("StudioWright's Chrome is closed.")
 
 
