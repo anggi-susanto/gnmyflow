@@ -14,6 +14,10 @@ before trusting a detail here.
   `--disable-backgrounding-occluded-windows`, `--disable-renderer-backgrounding` and
   `--disable-background-timer-throttling`, and `sw window hide` moves the window
   off-screen (CDP `Browser.setWindowBounds`) instead of minimizing it.
+- Chrome renders only the active tab of each window. A background tab reports
+  `visibilityState: hidden` and runs no animation frames, so Playwright's clicks never see
+  a stable element and time out. Flow and Flow Music therefore each get a window of their
+  own (CDP `Target.createTarget` with `newWindow`, at the existing window's bounds).
 - Playwright's download events do not fire on an attached browser. Downloads are captured
   with CDP `Browser.setDownloadBehavior` plus `downloadWillBegin` / `downloadProgress`.
 

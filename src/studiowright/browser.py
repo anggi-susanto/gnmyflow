@@ -27,13 +27,62 @@ class ChromeSession:
     def find_page(self, url_prefix: str) -> Page | None:
         return next((p for p in self.context.pages if p.url.startswith(url_prefix)), None)
 
+    async def window_id(self, page: Page) -> int:
+        cdp = await self.context.new_cdp_session(page)
+        try:
+            return int((await cdp.send("Browser.getWindowForTarget"))["windowId"])
+        finally:
+            await cdp.detach()
+
+    async def _alone(self, page: Page) -> bool:
+        """True when no other tab shares this tab's window."""
+        mine = await self.window_id(page)
+        for other in self.context.pages:
+            if other is not page and await self.window_id(other) == mine:
+                return False
+        return True
+
     async def page_for(self, url_prefix: str) -> Page:
-        """A tab whose URL starts with ``url_prefix``, else a blank or new tab."""
-        page = self.find_page(url_prefix)
+        """A tab for ``url_prefix`` in a window of its own.
+
+        Chrome renders only the active tab of each window, and a page that does not render
+        never settles, so clicks on it time out. Flow and Flow Music therefore each get
+        their own window; a tab that shares a window is replaced by one in a new window.
+        """
+        for stale in [p for p in self.context.pages if p.url.startswith("chrome-error://")]:
+            if len(self.context.pages) > 1:
+                await stale.close()
+        origin = "/".join(url_prefix.split("/")[:3])
+        page = (
+            self.find_page(url_prefix)
+            or self.find_page(origin)
+            or next((p for p in self.context.pages if p.url in ("about:blank", "")), None)
+        )
         if page is not None:
-            return page
-        blank = next((p for p in self.context.pages if p.url in ("about:blank", "")), None)
-        return blank or await self.context.new_page()
+            if await self._alone(page):
+                return page
+            await page.close()
+        return await self._new_window()
+
+    async def _new_window(self) -> Page:
+        bounds: dict[str, Any] = {}
+        if self.context.pages:
+            cdp = await self.context.new_cdp_session(self.context.pages[0])
+            try:
+                bounds = (await cdp.send("Browser.getWindowForTarget"))["bounds"]
+            finally:
+                await cdp.detach()
+        target: dict[str, Any] = {"url": "about:blank", "newWindow": True}
+        if bounds.get("windowState", "normal") == "normal":
+            # Open where the existing window is (off-screen when hidden), at its size.
+            target.update({k: bounds[k] for k in ("left", "top", "width", "height") if k in bounds})
+        browser_cdp = await self.browser.new_browser_cdp_session()
+        try:
+            async with self.context.expect_page() as created:
+                await browser_cdp.send("Target.createTarget", target)
+            return await created.value
+        finally:
+            await browser_cdp.detach()
 
     async def detach(self) -> None:
         """Disconnect Playwright. Chrome and its tabs stay open."""
@@ -69,20 +118,26 @@ async def ensure_rendering(session: ChromeSession, page: Page) -> None:
 
 
 async def place_window(session: ChromeSession, page: Page, *, visible: bool) -> None:
-    """Show the StudioWright window on screen, or keep it running off-screen."""
-    cdp, window_id, bounds = await _window_bounds(session, page)
-    try:
-        if bounds.get("windowState") != "normal":
+    """Show StudioWright's windows on screen, or keep them running off-screen."""
+    done: set[int] = set()
+    for tab in [page, *[p for p in session.context.pages if p is not page]]:
+        cdp, window_id, bounds = await _window_bounds(session, tab)
+        try:
+            if window_id in done:
+                continue
+            done.add(window_id)
+            if bounds.get("windowState") != "normal":
+                await cdp.send(
+                    "Browser.setWindowBounds",
+                    {"windowId": window_id, "bounds": {"windowState": "normal"}},
+                )
+            left = (ONSCREEN_LEFT + 40 * (len(done) - 1)) if visible else OFFSCREEN_LEFT
             await cdp.send(
                 "Browser.setWindowBounds",
-                {"windowId": window_id, "bounds": {"windowState": "normal"}},
+                {"windowId": window_id, "bounds": {"left": left, "top": 40}},
             )
-        left = ONSCREEN_LEFT if visible else OFFSCREEN_LEFT
-        await cdp.send(
-            "Browser.setWindowBounds", {"windowId": window_id, "bounds": {"left": left, "top": 40}}
-        )
-    finally:
-        await cdp.detach()
+        finally:
+            await cdp.detach()
 
 
 async def capture_download(
