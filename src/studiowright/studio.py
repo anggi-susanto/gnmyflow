@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from filelock import FileLock
+from playwright.async_api import Error as PlaywrightError
 from playwright.async_api import Playwright, async_playwright
 
 from studiowright import paths
@@ -26,6 +27,9 @@ from studiowright.flow import batchexecute as be
 from studiowright.flow.options import ImageOptions, VideoMode, VideoOptions
 from studiowright.flow.page import FLOW_ROOT, FlowError, FlowPage, UnusualActivity, suffix_for
 from studiowright.flow.replies import is_uuid
+from studiowright.music.options import MusicRequest
+from studiowright.music.page import ROOT as MUSIC_ROOT
+from studiowright.music.page import MusicPage
 from studiowright.pacing import Governor
 from studiowright.store import Store
 
@@ -105,6 +109,9 @@ class Studio:
         self._session: ChromeSession | None = None
         paths.locks_dir().mkdir(parents=True, exist_ok=True)
         self._lock = FileLock(str(paths.locks_dir() / f"{profile}.lock"))
+        # Flow Music runs in its own tab, so it has its own lock and pacing.
+        self._music_lock = FileLock(str(paths.locks_dir() / f"{profile}-music.lock"))
+        self.music_governor = Governor(self.store, f"{profile}:music")
 
     async def __aenter__(self) -> Studio:
         self._playwright = await async_playwright().start()
@@ -263,6 +270,24 @@ class Studio:
         finally:
             self._lock.release()
 
+    async def _fail(self, job_id: str, exc: BaseException, site: str) -> None:
+        """Record a failed job with a screenshot of the page it failed on."""
+        shot = None
+        try:
+            page = self.session.find_page(site)
+            if page is not None:
+                paths.incidents_dir().mkdir(parents=True, exist_ok=True)
+                shot = paths.incidents_dir() / f"{job_id}.png"
+                await page.screenshot(path=str(shot))
+        except Exception:
+            shot = None
+        detail = f"{type(exc).__name__}: {exc}"
+        if shot is not None:
+            detail += f" (screenshot: {shot})"
+            if isinstance(exc, FlowError | PlaywrightError):
+                exc.args = (f"{exc.args[0] if exc.args else exc} (screenshot: {shot})",)
+        self.store.update_job(job_id, status="failed", error=detail, finished=time.time())
+
     # --- generation -------------------------------------------------------------------
     def _out_dir(self, requested: Path | None) -> Path:
         out = requested or paths.output_dir()
@@ -356,9 +381,7 @@ class Studio:
             self.store.update_job(job_id, status="done", result=result, finished=time.time())
             return result
         except BaseException as exc:
-            self.store.update_job(
-                job_id, status="failed", error=f"{type(exc).__name__}: {exc}", finished=time.time()
-            )
+            await self._fail(job_id, exc, FLOW_ROOT)
             raise
         finally:
             self._lock.release()
@@ -441,9 +464,64 @@ class Studio:
             self.store.update_job(job_id, status="done", result=result, finished=time.time())
             return result
         except BaseException as exc:
-            self.store.update_job(
-                job_id, status="failed", error=f"{type(exc).__name__}: {exc}", finished=time.time()
-            )
+            await self._fail(job_id, exc, FLOW_ROOT)
             raise
         finally:
             self._lock.release()
+
+    # --- Flow Music -------------------------------------------------------------------
+    async def music(self, request: MusicRequest) -> dict[str, Any]:
+        """Make a song or instrumental on flowmusic.app and save its audio."""
+        await asyncio.to_thread(self._music_lock.acquire)
+        job_id = self.store.create_job(
+            "music",
+            self.profile,
+            None,
+            {
+                "sound": request.sound,
+                "lyrics": request.lyrics,
+                "bpm": request.bpm,
+                "length_s": request.length_s,
+                "seed": request.seed,
+                "model": request.model.value,
+                "title": request.title,
+                "format": request.audio_format.value,
+            },
+        )
+        started = time.time()
+        self.store.update_job(job_id, status="running", started=started)
+        try:
+            music = await MusicPage.open(self.session)
+            await music.compose(request)
+            await self.music_governor.wait_turn()
+            clips = await music.generate()
+            out = self._out_dir(request.out_dir)
+            stem = time.strftime("%Y%m%d-%H%M%S") + f"-music-{job_id[:6]}"
+            files = []
+            for number, clip in enumerate(clips, start=1):
+                url = clip.wav_url if request.audio_format.value == "wav" else clip.audio_url
+                if not url:
+                    raise FlowError(f"song {clip.clip_id} has no {request.audio_format.value} file")
+                response = await music.page.context.request.get(url)
+                if response.status != 200:
+                    raise FlowError(f"song download failed with HTTP {response.status}")
+                target = _unique(out / f"{stem}-{number}.{request.audio_format.value}")
+                target.write_bytes(await response.body())
+                files.append(str(target))
+            result = {
+                "job_id": job_id,
+                "files": files,
+                "clip_ids": [c.clip_id for c in clips],
+                "durations_s": [round(c.duration_s, 1) if c.duration_s else None for c in clips],
+                "titles": [c.title for c in clips],
+                "credits_remaining_before": music.credits_remaining,
+                "plan": music.plan,
+                "seconds": round(time.time() - started, 1),
+            }
+            self.store.update_job(job_id, status="done", result=result, finished=time.time())
+            return result
+        except BaseException as exc:
+            await self._fail(job_id, exc, MUSIC_ROOT)
+            raise
+        finally:
+            self._music_lock.release()

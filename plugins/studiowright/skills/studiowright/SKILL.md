@@ -1,6 +1,6 @@
 ---
 name: studiowright
-description: Use when the user wants images or video clips made in Google Flow (Nano Banana images; Omni or Veo video), wants to reuse reference images or start/end frames, or wants existing Flow media downloaded. Explains the StudioWright MCP tools, their options, costs and pacing.
+description: Use when the user wants images or video clips made in Google Flow (Nano Banana images; Omni or Veo video), songs or instrumental music made in Google Flow Music, wants to reuse reference images or start/end frames, or wants existing Flow media downloaded. Explains the StudioWright MCP tools, their options, costs and pacing.
 ---
 
 # StudioWright: Google Flow through the user's own Chrome
@@ -27,6 +27,13 @@ StudioWright drives Google Flow's web UI in the user's own signed-in Chrome. It 
   - `resolution` (360p/720p) and `duration` (4/6/8/10 s) apply to Omni only.
 - `size` downloads Flow's own other sizes: images `2K` (upscaled); clips `1080p` from a 720p clip, `720p` from a 360p clip, `270p` (GIF).
 - `flow_options` lists every model and option.
+
+## Music (Google Flow Music)
+
+- `music_generate(sound, lyrics, bpm, length, seed, model, title, audio_format)`.
+- `sound` describes the style, instruments and mood. Leave `lyrics` empty for an instrumental; Turkish lyrics work.
+- `length` is "1:00"-"3:00". The output is 48 kHz WAV by default.
+- About 5 Flow Music credits per song (a separate balance from Flow's), and about 40 s per call.
 
 ## Results
 

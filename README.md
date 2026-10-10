@@ -1,6 +1,6 @@
 # StudioWright
 
-Generate **Google Flow** images and videos from the terminal, from Claude Code, or from any MCP client, using your own Flow subscription.
+Generate **Google Flow** images and videos and **Google Flow Music** songs from the terminal, from Claude Code, or from any MCP client, using your own subscriptions.
 
 > **Unofficial; not affiliated with Google.** StudioWright drives Flow's web UI in your own signed-in Chrome and spends your own credits. Flow can change at any time, and automation is subject to Google's Terms of Service.
 
@@ -69,6 +69,19 @@ Prices Flow showed on a Pro account (October 2026):
 
 Images cost no credits.
 
+### Music (Google Flow Music)
+
+```bash
+sw music "calm documentary underscore, soft piano and warm strings" --bpm 80 --length 1:30 --title "Bed 1"
+sw music "warm acoustic folk, gentle male vocal" --lyrics-file lyrics.txt --length 2:00 --format m4a
+```
+
+- Without lyrics the track is instrumental. Turkish lyrics work.
+- Length is 1:00-3:00; BPM and seed are optional. Models are `lyria-3.5` (default) and `lyria-3-pro`.
+- Files are 48 kHz stereo WAV by default.
+- A song took about 40 s end to end and cost 5 Flow Music credits. The result shows the credits remaining.
+- Sign in once with `sw stop` then `sw auth login --url https://www.flowmusic.app/`.
+
 ### Batch files
 
 JSON Lines, one job per line, or a JSON list:
@@ -77,6 +90,7 @@ JSON Lines, one job per line, or a JSON list:
 {"id": "keeper", "kind": "image", "prompt": "a lighthouse keeper, flat 2D", "refs": ["style.png"]}
 {"id": "close", "kind": "image", "prompt": "close-up of the same keeper", "refs": ["keeper"]}
 {"id": "clip", "kind": "video", "prompt": "he turns to the sea", "start": "keeper", "duration": 6, "max_credits": 12}
+{"id": "bed", "kind": "music", "sound": "calm piano underscore", "length": "1:30"}
 ```
 
 - `refs`, `start` and `end` take file paths (relative to the batch file), media ids, or the `id` of an earlier job.
@@ -98,6 +112,7 @@ MCP tools:
 - `flow_generate_image`, `flow_generate_video`: video supports `max_credits` and `dry_run`
 - `flow_upload`, `flow_download`
 - `flow_create_project`, `flow_use_project`
+- `music_generate`
 - `flow_status`, `flow_options`
 
 ## Configuration

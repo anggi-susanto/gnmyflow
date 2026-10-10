@@ -28,6 +28,7 @@ from studiowright.flow.options import (
     VideoOptions,
 )
 from studiowright.flow.page import FlowError
+from studiowright.music.options import AudioFormat, MusicModel, MusicRequest
 from studiowright.pacing import CoolingDown
 from studiowright.store import Store
 from studiowright.studio import ImageRequest, Studio, VideoRequest
@@ -412,12 +413,79 @@ def run(obj: dict[str, str], batch_file: Path, keep_going: bool) -> None:
 
     async def make(studio: Studio) -> Any:
         return await run_batch(
-            batch_file.resolve(), studio.image, studio.video, keep_going=keep_going, on_event=report
+            batch_file.resolve(),
+            studio.image,
+            studio.video,
+            run_music=studio.music,
+            keep_going=keep_going,
+            on_event=report,
         )
 
     summary = _run(make, obj["profile"])
     counts = f"{summary.done} done, {summary.failed} failed, {summary.skipped} skipped"
     click.echo(f"{counts} of {summary.total}", err=True)
+
+
+@main.command()
+@click.argument("sound")
+@click.option("--lyrics", help="Song lyrics; without lyrics the track is instrumental.")
+@click.option(
+    "--lyrics-file",
+    type=click.Path(exists=True, dir_okay=False, path_type=Path),
+    help="Read lyrics from a file.",
+)
+@click.option("--bpm", type=int, help="Tempo; default: Flow decides.")
+@click.option("--length", help="Length, 1:00-3:00 (e.g. 1:30 or 90); default: Flow decides.")
+@click.option("--seed", type=int, help="Seed for repeatable results.")
+@click.option(
+    "--model",
+    type=click.Choice([m.value for m in MusicModel]),
+    default=MusicModel.LYRIA_3_5.value,
+    show_default=True,
+)
+@click.option("--title", help="Song title.")
+@click.option(
+    "--format",
+    "audio_format",
+    type=click.Choice([f.value for f in AudioFormat]),
+    default="wav",
+    show_default=True,
+)
+@click.option("--out", type=click.Path(file_okay=False, path_type=Path), help="Output folder.")
+@click.option("--json", "as_json", is_flag=True, help="Print JSON.")
+@click.pass_obj
+def music(
+    obj: dict[str, str],
+    sound: str,
+    lyrics: str | None,
+    lyrics_file: Path | None,
+    bpm: int | None,
+    length: str | None,
+    seed: int | None,
+    model: str,
+    title: str | None,
+    audio_format: str,
+    out: Path | None,
+    as_json: bool,
+) -> None:
+    """Make a song or instrumental in Google Flow Music from a SOUND description."""
+    if lyrics_file:
+        lyrics = lyrics_file.read_text(encoding="utf-8")
+    try:
+        request = MusicRequest.build(
+            sound,
+            lyrics=lyrics,
+            bpm=bpm,
+            length=length,
+            seed=seed,
+            model=model,
+            title=title,
+            audio_format=audio_format,
+            out_dir=out,
+        )
+    except OptionError as exc:
+        raise click.BadParameter(str(exc)) from exc
+    _emit(_run(lambda studio: studio.music(request), obj["profile"]), as_json)
 
 
 # --- state --------------------------------------------------------------------------------

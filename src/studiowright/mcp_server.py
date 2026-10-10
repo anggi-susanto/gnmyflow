@@ -21,13 +21,15 @@ from studiowright.flow.options import (
     VideoModel,
     VideoOptions,
 )
+from studiowright.music.options import MusicModel, MusicRequest
 from studiowright.pacing import Governor
 from studiowright.store import Store
 from studiowright.studio import ImageRequest, Studio, VideoRequest
 
 INSTRUCTIONS = """\
-StudioWright drives Google Flow (images and video) in the user's own signed-in Chrome,
-through Flow's web UI, using the user's own Flow subscription and credits.
+StudioWright drives Google Flow (images and video) and Google Flow Music (songs and
+instrumentals) in the user's own signed-in Chrome, through their web UIs, using the user's
+own subscriptions and credits.
 
 - Images (Nano Banana) cost no credits; videos cost credits (the tool reports what Flow
   charges in Flow's own settings pane, not here). Ask before generating many videos.
@@ -155,6 +157,41 @@ async def flow_generate_video(
     )
     async with Studio(_profile(profile)) as studio:
         return await studio.video(request)
+
+
+@server.tool()
+async def music_generate(
+    sound: str,
+    lyrics: str | None = None,
+    bpm: int | None = None,
+    length: str | None = None,
+    seed: int | None = None,
+    model: str = MusicModel.LYRIA_3_5.value,
+    title: str | None = None,
+    audio_format: str = "wav",
+    out_dir: str | None = None,
+    profile: str | None = None,
+) -> dict[str, Any]:
+    """Make a song or instrumental in Google Flow Music (flowmusic.app) and save the audio.
+
+    sound: style, instruments, mood (e.g. "calm documentary underscore, soft piano").
+    lyrics: song lyrics; leave empty for an instrumental. length: "1:00"-"3:00" or seconds.
+    audio_format: "wav" (48 kHz) or "m4a". About 5 Flow Music credits per song.
+    Returns file paths, clip ids, durations and the credits remaining before the call.
+    """
+    request = MusicRequest.build(
+        sound,
+        lyrics=lyrics,
+        bpm=bpm,
+        length=length,
+        seed=seed,
+        model=model,
+        title=title,
+        audio_format=audio_format,
+        out_dir=_out(out_dir),
+    )
+    async with Studio(_profile(profile)) as studio:
+        return await studio.music(request)
 
 
 @server.tool()

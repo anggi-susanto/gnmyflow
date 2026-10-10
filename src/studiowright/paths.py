@@ -47,6 +47,11 @@ def locks_dir() -> Path:
     return home() / "locks"
 
 
+def incidents_dir() -> Path:
+    """Screenshots of pages where a job failed."""
+    return home() / "incidents"
+
+
 def captures_dir() -> Path:
     """Raw wire captures. They hold session material, so they never leave this directory."""
     return home() / "captures"

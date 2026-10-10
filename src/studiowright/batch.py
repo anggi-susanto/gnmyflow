@@ -22,9 +22,23 @@ from pathlib import Path
 from typing import Any
 
 from studiowright.flow.options import ImageOptions, OptionError, VideoOptions
+from studiowright.music.options import MusicRequest
 from studiowright.studio import ImageRequest, VideoRequest
 
 IMAGE_KEYS = {"id", "kind", "prompt", "model", "aspect", "count", "refs", "project", "size", "out"}
+MUSIC_KEYS = {
+    "id",
+    "kind",
+    "sound",
+    "lyrics",
+    "bpm",
+    "length",
+    "seed",
+    "model",
+    "title",
+    "format",
+    "out",
+}
 VIDEO_KEYS = IMAGE_KEYS | {"mode", "start", "end", "resolution", "duration", "max_credits"}
 
 
@@ -45,11 +59,12 @@ def load_jobs(path: Path) -> list[dict[str, Any]]:
     for index, job in enumerate(jobs):
         job.setdefault("id", f"job-{index + 1:03d}")
         kind = job.get("kind")
-        if kind not in ("image", "video"):
-            raise BatchError(f"{job['id']}: kind must be 'image' or 'video'")
-        if not job.get("prompt"):
-            raise BatchError(f"{job['id']}: prompt is required")
-        unknown = set(job) - (IMAGE_KEYS if kind == "image" else VIDEO_KEYS)
+        if kind not in ("image", "video", "music"):
+            raise BatchError(f"{job['id']}: kind must be 'image', 'video' or 'music'")
+        if not job.get("sound" if kind == "music" else "prompt"):
+            raise BatchError(f"{job['id']}: {'sound' if kind == 'music' else 'prompt'} is required")
+        keys = {"image": IMAGE_KEYS, "video": VIDEO_KEYS, "music": MUSIC_KEYS}[kind]
+        unknown = set(job) - keys
         if unknown:
             raise BatchError(f"{job['id']}: unknown fields {sorted(unknown)}")
     ids = [job["id"] for job in jobs]
@@ -85,11 +100,23 @@ def _resolve(value: str | None, done: dict[str, dict[str, Any]]) -> str | None:
 
 def build_request(
     job: dict[str, Any], done: dict[str, dict[str, Any]], base: Path
-) -> ImageRequest | VideoRequest:
-    refs = tuple(_resolve(r, done) or r for r in job.get("refs", []))
+) -> ImageRequest | VideoRequest | MusicRequest:
     out = Path(job["out"]) if job.get("out") else None
     if out is not None and not out.is_absolute():
         out = base / out
+    if job["kind"] == "music":
+        return MusicRequest.build(
+            job["sound"],
+            lyrics=job.get("lyrics"),
+            bpm=job.get("bpm"),
+            length=job.get("length"),
+            seed=job.get("seed"),
+            model=job.get("model", "lyria-3.5"),
+            title=job.get("title"),
+            audio_format=job.get("format", "wav"),
+            out_dir=out,
+        )
+    refs = tuple(_resolve(r, done) or r for r in job.get("refs", []))
     refs = tuple(
         str(base / r) if not Path(r).is_absolute() and (base / r).is_file() else r for r in refs
     )
@@ -141,6 +168,7 @@ async def run_batch(
     run_image: Callable[[ImageRequest], Awaitable[dict[str, Any]]],
     run_video: Callable[[VideoRequest], Awaitable[dict[str, Any]]],
     *,
+    run_music: Callable[[MusicRequest], Awaitable[dict[str, Any]]] | None = None,
     keep_going: bool = False,
     on_event: Callable[[dict[str, Any]], None] | None = None,
 ) -> BatchSummary:
@@ -156,9 +184,14 @@ async def run_batch(
         record: dict[str, Any] = {"id": job["id"], "kind": job["kind"], "started": started}
         try:
             request = build_request(job, done, batch.parent)
-            result = await (
-                run_image(request) if isinstance(request, ImageRequest) else run_video(request)
-            )
+            if isinstance(request, MusicRequest):
+                if run_music is None:
+                    raise BatchError("this runner cannot make music")
+                result = await run_music(request)
+            elif isinstance(request, ImageRequest):
+                result = await run_image(request)
+            else:
+                result = await run_video(request)
             record.update(status="done", result=result)
             done[job["id"]] = record
             summary.done += 1
