@@ -425,6 +425,10 @@ Built-in guards:
 - When Google reports unusual activity, the profile cools down for 30 minutes and every
   call says so instead of retrying.
 - One job at a time per profile (and one Flow Music job at a time), queued by a lock.
+  Downloads run in a tab of their own beside generations, since they submit nothing.
+- Upscaled downloads (2K/4K, 1080p) are spaced a minute apart. Flow refuses bulk upscaling
+  with "unusual activity"; StudioWright then pauses upscales for an hour (generations go
+  on) and saves new media at their original size meanwhile.
 
 ## How it works
 
@@ -492,6 +496,15 @@ Flow upscales generated media only.
 </details>
 
 <details>
+<summary><b>2K / 1080p downloads are refused or paused</b></summary>
+
+Flow limits how many upscales an account may request in a row and answers further ones
+with "unusual activity". StudioWright stops at the first refusal, pauses upscales for an
+hour (`sw pace` shows it) and keeps generating. Download the originals meanwhile, upscale
+fewer media, or upscale locally.
+</details>
+
+<details>
 <summary><b>A music video template fails</b></summary>
 
 Flow Music sometimes cannot render a template for a song. Try again or pick another
@@ -514,6 +527,8 @@ plugin. `sw mcp` run in a terminal should wait silently for input.
 | `STUDIOWRIGHT_OUTPUT` | where files are saved | `Downloads/studiowright` |
 | `STUDIOWRIGHT_GAP_S`, `STUDIOWRIGHT_JITTER_S` | pacing between submits | 20 s + 0-6 s |
 | `STUDIOWRIGHT_COOLDOWN_S` | pause after an unusual-activity refusal | 1800 s |
+| `STUDIOWRIGHT_UPSCALE_GAP_S`, `STUDIOWRIGHT_UPSCALE_JITTER_S` | spacing of upscaled downloads | 60 s + 0-20 s |
+| `STUDIOWRIGHT_UPSCALE_COOLDOWN_S` | pause of upscales after a refusal | 3600 s |
 | `STUDIOWRIGHT_BIN` | the `sw` the Claude Code plugin starts | `sw` |
 
 Several Google accounts? Give each one its own profile: `sw --profile work auth login`,

@@ -52,7 +52,7 @@ request the page signed would be circumvention. So:
   | `jwpduf` | video status poll (every ~5 s) |
   | `as29s` | fresh signed URLs (fetched by the edit view) |
   | `jHPbke` | project creation (token-free) |
-| `SPrCad` | image upscale (2K/4K download) |
+| `SPrCad` | upscale behind a 2K/4K download; refused with code 7 / `PUBLIC_ERROR_UNUSUAL_ACTIVITY` after ~45 upscales in 37 min (2026-10-11) |
 
 - **Image reply.** One tuple per image: `[media_id, _, workflow_id, …, [DETAILS, _, [w, h]]]`
   with a signed `flow-content.google` URL in DETAILS.
@@ -94,6 +94,11 @@ request the page signed would be circumvention. So:
   medium has loaded.
 
 ## Prices and pacing
+
+Upscales are paced on their own (60 s + jitter) and pause for an hour after a refusal;
+the refusal is read from the `SPrCad` reply, because the page itself shows nothing.
+Flow's credit balance is not shown as a number anywhere in the UI (only a "credits
+running low" banner); StudioWright records it from video submit replies.
 
 | Job | Flow credits |
 | --- | --- |

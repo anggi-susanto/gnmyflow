@@ -42,27 +42,42 @@ class ChromeSession:
                 return False
         return True
 
-    async def page_for(self, url_prefix: str) -> Page:
+    @staticmethod
+    async def role_of(page: Page) -> str:
+        """The role a tab was opened for (kept in ``window.name``), or "" for the main tab."""
+        try:
+            name = await page.evaluate("() => window.name || ''")
+        except Exception:
+            return ""
+        return name[3:] if isinstance(name, str) and name.startswith("sw-") else ""
+
+    async def page_for(self, url_prefix: str, role: str = "") -> Page:
         """A tab for ``url_prefix`` in a window of its own.
 
         Chrome renders only the active tab of each window, and a page that does not render
         never settles, so clicks on it time out. Flow and Flow Music therefore each get
         their own window; a tab that shares a window is replaced by one in a new window.
+        ``role`` asks for a separate tab of the same site (say, for downloads that run
+        alongside a generation); it keeps its role across navigations.
         """
         for stale in [p for p in self.context.pages if p.url.startswith("chrome-error://")]:
             if len(self.context.pages) > 1:
                 await stale.close()
+        mine = [p for p in self.context.pages if await self.role_of(p) == role]
         origin = "/".join(url_prefix.split("/")[:3])
         page = (
-            self.find_page(url_prefix)
-            or self.find_page(origin)
-            or next((p for p in self.context.pages if p.url in ("about:blank", "")), None)
+            next((p for p in mine if p.url.startswith(url_prefix)), None)
+            or next((p for p in mine if p.url.startswith(origin)), None)
+            or next((p for p in mine if p.url in ("about:blank", "")), None)
         )
         if page is not None:
             if await self._alone(page):
                 return page
             await page.close()
-        return await self._new_window()
+        page = await self._new_window()
+        if role:
+            await page.evaluate("(name) => { window.name = name; }", f"sw-{role}")
+        return page
 
     async def _new_window(self) -> Page:
         bounds: dict[str, Any] = {}

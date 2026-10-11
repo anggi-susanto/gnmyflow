@@ -34,6 +34,16 @@ class PaceSettings:
     cooldown_s: float = 30 * 60
 
     @classmethod
+    def for_upscales(cls) -> PaceSettings:
+        """Upscaled downloads: Flow refused them with "unusual activity" after ~45 in 37 min,
+        so they are spaced wider and pause for an hour after a refusal."""
+        return cls(
+            gap_s=_env_seconds("STUDIOWRIGHT_UPSCALE_GAP_S", 60.0),
+            jitter_s=_env_seconds("STUDIOWRIGHT_UPSCALE_JITTER_S", 20.0),
+            cooldown_s=_env_seconds("STUDIOWRIGHT_UPSCALE_COOLDOWN_S", 60 * 60.0),
+        )
+
+    @classmethod
     def from_env(cls) -> PaceSettings:
         return cls(
             gap_s=_env_seconds("STUDIOWRIGHT_GAP_S", cls.gap_s),

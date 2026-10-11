@@ -67,6 +67,8 @@ def _emit(result: dict[str, Any], as_json: bool) -> None:
         return
     for path in result.get("files", []):
         click.echo(path)
+    for note in result.get("notes", []):
+        click.echo(f"note: {note}", err=True)
     seconds = result.get("seconds")
     if seconds is not None:
         click.echo(f"done in {seconds} s (job {result.get('job_id')})", err=True)
@@ -892,6 +894,9 @@ def pace(obj: dict[str, str]) -> None:
     cooling = status["cooldown_until"] - now
     click.echo(f"cooldown: {cooling / 60:.0f} min left" if cooling > 0 else "cooldown: none")
     click.echo(f"unusual-activity refusals so far: {status['refusals']}")
+    upscale = Governor(Store(), f"{obj['profile']}:upscale").status()
+    paused = upscale["cooldown_until"] - now
+    click.echo(f"upscales: paused for {paused / 60:.0f} min" if paused > 0 else "upscales: ok")
 
 
 @main.command()

@@ -71,3 +71,20 @@ def test_parse_reply_reports_missing_row_for_login_html() -> None:
 def test_rows_skips_noise_lines() -> None:
     text = framed(["di", 42], ["wrb.fr", "x", "[]"]) + "\nnot json\n[broken"
     assert [row[0] for row in be.rows(text)] == ["di", "wrb.fr"]
+
+
+def test_upscale_refusal_reads_as_unusual_activity() -> None:
+    """The SPrCad reply Flow sent when it refused a 2K upscale (2026-10-11)."""
+    import pytest
+
+    from studiowright.flow import batchexecute as be
+
+    body = (
+        ")]}'\n\n192\n"
+        '[["wrb.fr","SPrCad",null,null,null,[7,null,[["type.googleapis.com/google.rpc.ErrorInfo",'
+        '["PUBLIC_ERROR_UNUSUAL_ACTIVITY"]]]],"generic"],["di",296],'
+        '["af.httprm",296,"1854946851749933209",12]]\n25\n[["e",4,null,null,228]]\n'
+    )
+    with pytest.raises(be.RpcError) as caught:
+        be.parse_reply(body, "SPrCad")
+    assert any("UNUSUAL_ACTIVITY" in reason for reason in caught.value.reasons)

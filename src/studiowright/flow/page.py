@@ -46,6 +46,15 @@ class GenerationRefused(FlowError):
     """Flow refused the generation, e.g. for its content policy."""
 
 
+class UpscaleRefused(FlowError):
+    """Flow refused to upscale a download; ``unusual`` when it was an unusual-activity
+    refusal, after which upscales must pause."""
+
+    def __init__(self, message: str, unusual: bool) -> None:
+        super().__init__(message)
+        self.unusual = unusual
+
+
 class AssetNotFound(FlowError):
     """The media id is not on this project's grid."""
 
@@ -60,6 +69,26 @@ class VideoClip:
 
 #: How long Flow may upscale before the sized download begins.
 UPSCALE_START_S = 420
+#: The RPC behind a sized (upscaled) download.
+UPSCALE_RPC = "SPrCad"
+
+#: The text of failed tiles (Flow writes its reason there), newest first.
+SCROLL_TOP_JS = "(sel) => { const g = document.querySelector(sel); if (g) g.scrollTop = 0; }"
+FAILED_TILES_JS = r"""
+() => [...document.querySelectorAll('mat-icon')]
+  .filter((icon) => ['warning', 'warning_amber', 'error', 'error_outline', 'report']
+    .includes(icon.textContent.trim()))
+  .map((icon) => {
+    let card = icon.closest('flow-video-tile, flow-image-tile') || icon.parentElement;
+    for (let i = 0; i < 4 && card && card.textContent.trim().length < 40; i++) {
+      card = card.parentElement;
+    }
+    const copy = card.cloneNode(true);
+    copy.querySelectorAll('mat-icon, button').forEach((e) => e.remove());
+    return copy.textContent.replace(/\s+/g, ' ').trim();
+  })
+  .filter(Boolean)
+"""
 
 
 def _rpc(url: str) -> str:
@@ -216,8 +245,10 @@ class FlowPage:
         return f"{FLOW_ROOT}project/{self.project_id}"
 
     @classmethod
-    async def open(cls, session: ChromeSession, project_id: str) -> FlowPage:
-        flow = cls(await session.page_for(f"{FLOW_ROOT}project/{project_id}"), project_id, session)
+    async def open(cls, session: ChromeSession, project_id: str, role: str = "") -> FlowPage:
+        """The project page in its own tab; ``role`` gives a second tab (e.g. downloads)."""
+        page = await session.page_for(f"{FLOW_ROOT}project/{project_id}", role)
+        flow = cls(page, project_id, session)
         await ensure_rendering(session, flow.page)
         # Anything but the project page itself (an edit view left by an interrupted job,
         # say) does not show the grid and prompt box StudioWright works with.
@@ -640,8 +671,16 @@ class FlowPage:
                     )
                 ]
                 if failed:
+                    # Flow writes its reason (a policy refusal, say) on the failed tile.
+                    await asyncio.sleep(2)
+                    with contextlib.suppress(Exception):
+                        await self.page.evaluate(SCROLL_TOP_JS, s.GRID_SCROLLER)
+                    reasons: list[str] = []
+                    with contextlib.suppress(Exception):
+                        reasons = await self.page.evaluate(FAILED_TILES_JS)
+                    reason = f": {reasons[0]}" if reasons else ""
                     raise GenerationRefused(
-                        f"Flow reported the clip failed (status {failed[0].status})"
+                        f"Flow reported the clip failed (status {failed[0].status}){reason}"
                     )
         pending = " ".join(sorted(new_ids))
         hint = f"; it may still finish: sw download {pending}" if pending else ""
@@ -740,12 +779,28 @@ class FlowPage:
                     raise FlowError(f"size {size!r} is not offered; Flow offers: {offered}")
                 if await entry.first.is_disabled():
                     raise FlowError(f"size {size!r} is not available on this account")
-                await entry.first.click()
-                # Upscaling runs in Flow first: seconds for an image, minutes for a 4K clip.
-                if not await catcher.started(UPSCALE_START_S):
-                    raise FlowError(
-                        f"Flow did not start the {size} download within {UPSCALE_START_S} s"
-                    )
+                with ReplyWatch(self.page, [UPSCALE_RPC]) as upscale:
+                    await entry.first.click()
+                    # Upscaling runs in Flow first: seconds for an image, minutes for a 4K
+                    # clip. Flow can also refuse it, which shows only in the RPC's reply.
+                    deadline = time.monotonic() + UPSCALE_START_S
+                    while not await catcher.started(1.0):
+                        for rpc_id, _status, text in upscale.bodies:
+                            try:
+                                be.parse_reply(text, rpc_id)
+                            except be.RpcError as exc:
+                                unusual = any(UNUSUAL in r for r in exc.reasons)
+                                why = "unusual activity" if unusual else str(exc)
+                                raise UpscaleRefused(
+                                    f"Flow refused the {size} upscale of {item_id}: {why}",
+                                    unusual,
+                                ) from exc
+                            except be.MissingReply:
+                                continue
+                        if time.monotonic() > deadline:
+                            raise FlowError(
+                                f"Flow did not start the {size} download within {UPSCALE_START_S} s"
+                            )
                 return await catcher.saved(timeout_s)
         finally:
             # Several downloads in a row skip the (slow, in a large project) grid between them.

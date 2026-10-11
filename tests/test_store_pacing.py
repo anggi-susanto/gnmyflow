@@ -96,3 +96,14 @@ def test_assets_by_prefix_and_source(tmp_path: Path) -> None:
     assert len(store.assets_by_prefix("p", "675340")) == 2
     asset = store.asset_by_hash("p", "h1")
     assert asset is not None and asset.source == "C:/ref.jpg" and asset.name == "sw-2a72e6e12d.jpg"
+
+
+def test_upscales_are_paced_apart_from_generations(tmp_path: Path) -> None:
+    store = Store(tmp_path / "s.db")
+    upscale = Governor(store, "p:upscale", PaceSettings.for_upscales())
+    generate = Governor(store, "p", PaceSettings(gap_s=0, jitter_s=0))
+    assert upscale.settings.gap_s >= 60 and upscale.settings.cooldown_s >= 3600
+    upscale.report_unusual_activity()
+    with pytest.raises(CoolingDown):
+        upscale.reserve()
+    assert generate.reserve() == 0  # generations are not paused by an upscale refusal

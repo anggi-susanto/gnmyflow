@@ -28,7 +28,14 @@ from studiowright import paths
 from studiowright.browser import ChromeSession, attach, place_window
 from studiowright.flow import batchexecute as be
 from studiowright.flow.options import ImageOptions, OptionError, VideoMode, VideoOptions
-from studiowright.flow.page import FLOW_ROOT, FlowError, FlowPage, UnusualActivity, suffix_for
+from studiowright.flow.page import (
+    FLOW_ROOT,
+    FlowError,
+    FlowPage,
+    UnusualActivity,
+    UpscaleRefused,
+    suffix_for,
+)
 from studiowright.flow.replies import is_uuid
 from studiowright.music.options import (
     AudioFormat,
@@ -40,12 +47,12 @@ from studiowright.music.options import (
     format_time,
     parse_time,
 )
-from studiowright.music.page import EDIT_KINDS, SONG_KINDS, MusicPage, stem_name
+from studiowright.music.page import EDIT_KINDS, SONG_KINDS, MusicPage, NotStarted, stem_name
 from studiowright.music.page import LIBRARY_URL as MUSIC_LIBRARY
 from studiowright.music.page import ROOT as MUSIC_ROOT
 from studiowright.music.page import SESSION_URL as MUSIC_SESSION
 from studiowright.music.wire import Clip
-from studiowright.pacing import Governor
+from studiowright.pacing import CoolingDown, Governor, PaceSettings
 from studiowright.store import Store
 
 log = logging.getLogger("studiowright.studio")
@@ -129,6 +136,13 @@ class Studio:
         # Flow Music runs in its own tab, so it has its own lock and pacing.
         self._music_lock = FileLock(str(paths.locks_dir() / f"{profile}-music.lock"))
         self.music_governor = Governor(self.store, f"{profile}:music")
+        # Downloads submit nothing, so they run in a tab of their own beside generations.
+        self._download_lock = FileLock(str(paths.locks_dir() / f"{profile}-download.lock"))
+        # Flow refuses bulk upscaling with "unusual activity" (seen after ~45 2K downloads
+        # in 37 min), so upscales are spaced and pause on a refusal, apart from generations.
+        self.upscale_governor = Governor(
+            self.store, f"{profile}:upscale", PaceSettings.for_upscales()
+        )
 
     async def __aenter__(self) -> Studio:
         self._playwright = await async_playwright().start()
@@ -274,15 +288,20 @@ class Studio:
         out_dir: Path | None = None,
         size: str | None = None,
     ) -> dict[str, Any]:
-        """Download existing media by id (e.g. a clip that finished after a timeout)."""
-        await self._locked()
+        """Download existing media by id (e.g. a clip that finished after a timeout).
+
+        Runs in a tab of its own under its own lock, so a slow upscale does not hold up
+        generations; nothing is submitted for a plain download.
+        """
+        await asyncio.to_thread(self._download_lock.acquire)
         try:
             project_id = await self._project(project)
-            flow = await FlowPage.open(self.session, project_id)
+            flow = await FlowPage.open(self.session, project_id, role="download")
             out = self._out_dir(out_dir)
             files = []
             grid_urls: dict[str, dict[str, str]] | None = None
             errors: dict[str, str] = {}
+            paused: str | None = None
             for requested in media_ids:
                 try:
                     media_id = self._full_media_id(project_id, requested)
@@ -297,7 +316,15 @@ class Studio:
                         media_id = matches[0]
                     # Each medium's own edit view opens by id, however far down the grid.
                     if size:
-                        saved = await flow.download_size(media_id, size, out, back=False)
+                        if paused:
+                            raise UpscaleRefused(paused, unusual=True)
+                        try:
+                            saved = await self._upscaled(flow, media_id, size, out)
+                        except UpscaleRefused as exc:
+                            if exc.unusual:
+                                # Do not keep asking: the rest would be refused too.
+                                paused = str(exc)
+                            raise
                         target = _unique(out / f"{media_id}-{size}{saved.suffix}")
                         saved.rename(target)
                     else:
@@ -317,7 +344,7 @@ class Studio:
                 raise FlowError("; ".join(f"{k}: {v}" for k, v in errors.items()))
             return {"project_id": project_id, "files": files, "errors": errors}
         finally:
-            self._lock.release()
+            self._download_lock.release()
 
     async def _fail(self, job_id: str, exc: BaseException, site: str) -> None:
         """Record a failed job with a screenshot of the page it failed on."""
@@ -343,6 +370,24 @@ class Studio:
         out.mkdir(parents=True, exist_ok=True)
         return out
 
+    async def _upscaled(self, flow: FlowPage, item_id: str, size: str, out: Path) -> Path:
+        """A sized download, paced apart from generations; a refusal for unusual activity
+        pauses further upscales (not generations)."""
+        try:
+            await self.upscale_governor.wait_turn()
+        except CoolingDown as exc:
+            minutes = max(1, round((exc.until - time.time()) / 60))
+            raise UpscaleRefused(
+                f"upscales are paused for ~{minutes} min after Flow reported unusual activity",
+                unusual=True,
+            ) from exc
+        try:
+            return await flow.download_size(item_id, size, out, back=False)
+        except UpscaleRefused as exc:
+            if exc.unusual:
+                self.upscale_governor.report_unusual_activity()
+            raise
+
     async def _download_all(
         self,
         flow: FlowPage,
@@ -351,13 +396,21 @@ class Studio:
         stem: str,
         default_suffix: str,
         size: str | None = None,
+        notes: list[str] | None = None,
     ) -> list[str]:
         files = []
+        upscaled = False
         for number, (media_id, url, workflow_id) in enumerate(items, start=1):
+            saved = None
             if size:
-                if not workflow_id:
-                    raise FlowError(f"cannot open {media_id} to download size {size}")
-                saved = await flow.download_size(workflow_id, size, out)
+                try:
+                    saved = await self._upscaled(flow, workflow_id or media_id, size, out)
+                    upscaled = True
+                except UpscaleRefused as exc:
+                    # The generation itself succeeded; keep it at its own size.
+                    if notes is not None:
+                        notes.append(f"{exc}; saved at the original size instead")
+            if saved is not None:
                 target = _unique(out / f"{stem}-{number}-{size}{saved.suffix or default_suffix}")
                 saved.rename(target)
             else:
@@ -377,6 +430,8 @@ class Studio:
                 file_sha256(target),
                 "generated",
             )
+        if upscaled:
+            await flow.page.goto(flow.url, wait_until="domcontentloaded")
         return files
 
     async def _submit_guarded(self, call: Any) -> Any:
@@ -413,6 +468,7 @@ class Studio:
                 await flow.attach_reference(media_id)
             results = await self._submit_guarded(lambda: flow.generate_images(request.prompt))
             stem = time.strftime("%Y%m%d-%H%M%S") + f"-image-{job_id[:6]}"
+            notes: list[str] = []
             files = await self._download_all(
                 flow,
                 [(r.media_id, r.url, r.workflow_id) for r in results],
@@ -420,6 +476,7 @@ class Studio:
                 stem,
                 ".jpg",
                 request.size,
+                notes,
             )
             result = {
                 "job_id": job_id,
@@ -429,6 +486,8 @@ class Studio:
                 "sizes": [[r.width, r.height] for r in results],
                 "seconds": round(time.time() - started, 1),
             }
+            if notes:
+                result["notes"] = notes
             self.store.update_job(job_id, status="done", result=result, finished=time.time())
             return result
         except BaseException as exc:
@@ -496,6 +555,7 @@ class Studio:
                     await flow.attach_reference(media_id)
             clips = await self._submit_guarded(lambda: flow.generate_video(request.prompt))
             stem = time.strftime("%Y%m%d-%H%M%S") + f"-video-{job_id[:6]}"
+            notes: list[str] = []
             files = await self._download_all(
                 flow,
                 [(c.media_id, c.url, c.workflow_id) for c in clips],
@@ -503,6 +563,7 @@ class Studio:
                 stem,
                 ".mp4",
                 request.size,
+                notes,
             )
             result = {
                 "job_id": job_id,
@@ -513,6 +574,8 @@ class Studio:
                 "credits_left": flow.credits_left,
                 "seconds": round(time.time() - started, 1),
             }
+            if notes:
+                result["notes"] = notes
             if flow.credits_left is not None:
                 self.store.set_setting(
                     f"flow.credits.{self.profile}",
@@ -596,9 +659,27 @@ class Studio:
                 music = await MusicPage.open(self.session)
                 await music.compose(request)
             await self.music_governor.wait_turn()
-            watch = await music.generate(kinds=SONG_KINDS)
+            submitted = time.time()
+            try:
+                clips = (await music.generate(kinds=SONG_KINDS)).ready_clips()
+            except NotStarted:
+                raise
+            except FlowError as exc:
+                # The song may have finished after the wait; it is in the library then.
+                clips = [
+                    c
+                    for c in await music.library()
+                    if c.kind in SONG_KINDS
+                    and c.complete
+                    and c.created is not None
+                    and c.created.timestamp() >= submitted - 30
+                    and (not request.title or c.title == request.title)
+                ]
+                if not clips:
+                    raise
+                log.warning("%s; found %d finished song(s) in the library", exc, len(clips))
             songs = await self._save_songs(
-                music, watch.ready_clips(), request.audio_format, request.out_dir, job_id
+                music, clips, request.audio_format, request.out_dir, job_id
             )
             return self._song_result(music, songs)
 
