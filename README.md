@@ -345,6 +345,7 @@ sw upload FILE ...                 # upload references once, print their media i
 sw download MEDIA_ID ... [--size 2K|1080p]
 sw project create "TITLE" | use ID | list
 sw run BATCH.jsonl [--keep-going]
+sw credits                         # Flow (as of the last clip) and Flow Music balances
 sw jobs | sw pace | sw window show|hide | sw stop | sw mcp
 ```
 
@@ -406,6 +407,7 @@ Prices as Flow and Flow Music showed them in October 2026. Your plan may differ.
 | --- | --- |
 | Image, any Nano Banana model | 0 (daily quota) |
 | Omni Flash clip, 360p, 4 s | 4 |
+| Omni Flash clip, 720p, 4 / 6 / 8 / 10 s | 7 / 10 / 12 / 15 |
 | Veo 3.1 Lite / Fast / Quality, 8 s | 10 / 20 / 100 |
 
 | Google Flow Music | Credits | Time |
@@ -477,6 +479,16 @@ the ids.
 
 Google asked for a break. Wait for the cooldown (`sw pace` shows it), and spread large
 batches out. Do not run several profiles of the same account in parallel.
+</details>
+
+<details>
+<summary><b>A large project (hundreds of media)</b></summary>
+
+Flow's grid only renders the tiles near the viewport. StudioWright finds older references
+by searching the prompt box's picker (uploads keep their `sw-<hash>` name) or by scrolling
+the grid from where the medium should be, and downloads open each medium's own edit view,
+so position in the grid does not matter. Uploaded images download only at their own size;
+Flow upscales generated media only.
 </details>
 
 <details>

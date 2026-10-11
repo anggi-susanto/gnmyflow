@@ -394,6 +394,10 @@ def download(
         lambda studio: studio.download(list(media_ids), project, out, size), obj["profile"]
     )
     _emit(result, as_json)
+    if result.get("errors") and not as_json:
+        for media_id, error in result["errors"].items():
+            click.echo(f"failed: {media_id}: {error}", err=True)
+        raise SystemExit(1)
 
 
 @main.command()
@@ -859,6 +863,21 @@ def jobs(obj: dict[str, str], limit: int) -> None:
         click.echo(
             f"{row['id']}  {when}  {row['kind']:5}  {row['status']:7} {took:>5}  {detail[:80]}"
         )
+
+
+@main.command()
+@click.pass_obj
+def credits(obj: dict[str, str]) -> None:
+    """Credit balances: Flow (as of the last video) and Flow Music (live)."""
+    seen = Store().get_setting(f"flow.credits.{obj['profile']}")
+    if seen:
+        flow = json.loads(seen)
+        when = time.strftime("%m-%d %H:%M", time.localtime(flow["at"]))
+        click.echo(f"Flow: {flow['credits']} credits (after the video at {when})")
+    else:
+        click.echo("Flow: unknown until the next video (Flow reports it on submit)")
+    music = _run(lambda studio: studio.music_library(0), obj["profile"])
+    click.echo(f"Flow Music: {music['credits_remaining']} credits ({music['plan']})")
 
 
 @main.command()

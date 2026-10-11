@@ -53,6 +53,21 @@ class ImageResult:
     workflow_id: str | None = None
 
 
+def credit_balance(payload: Any) -> int | None:
+    """The credit balance a video submit reply reports after charging:
+    ``[null, <balance>, [[media, …]], [[record]]]``. None for any other shape."""
+    if (
+        isinstance(payload, list)
+        and len(payload) >= 3
+        and payload[0] is None
+        and isinstance(payload[1], int | float)
+        and not isinstance(payload[1], bool)
+        and isinstance(payload[2], list)
+    ):
+        return int(payload[1])
+    return None
+
+
 def workflow_ids(payload: Any) -> dict[str, str]:
     """Media id → workflow id (the id of its edit view), from image tuples
     ``[media_id, null, workflow_id, …]`` and records ``[media_id, project_id, workflow_id, …]``."""

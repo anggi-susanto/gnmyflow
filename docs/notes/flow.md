@@ -52,6 +52,7 @@ request the page signed would be circumvention. So:
   | `jwpduf` | video status poll (every ~5 s) |
   | `as29s` | fresh signed URLs (fetched by the edit view) |
   | `jHPbke` | project creation (token-free) |
+| `SPrCad` | image upscale (2K/4K download) |
 
 - **Image reply.** One tuple per image: `[media_id, _, workflow_id, …, [DETAILS, _, [w, h]]]`
   with a signed `flow-content.google` URL in DETAILS.
@@ -62,6 +63,21 @@ request the page signed would be circumvention. So:
   signed URLs for the project's media.
 
 ## UI facts
+
+- Since 2026-10-11 the project page has a left sidebar (all media, images, videos,
+  characters, scenes, uploads) and shows two large tiles per row. The grid is a virtual
+  scroller (`.cdk-virtual-scrollable`): only ~16 tiles exist at a time, and a project of
+  270 media is ~52,000 px tall. Tiles carry `img[data-media-id]` and their title as text.
+  StudioWright scrolls that container itself (from where the medium should be, by its age
+  among the project's media) rather than with the mouse wheel.
+- The prompt box's own add button opens a picker with tabs and a search field. Search
+  matches display names; uploads are named after the staged file (`sw-<sha256[:10]>.jpg`),
+  so an old upload is attached by searching its name. Clicking a result attaches it.
+- `/project/<id>/edit/<media id>` opens a medium's edit view directly (a workflow id works
+  too), so sized downloads and fresh URLs need no grid. Generated media offer
+  `1K` / `2K` / `4K` there; uploaded images have no size menu and download at once.
+- The interface follows the account's language (it switched to Turkish); selectors use
+  icon ligatures, classes and tokens Flow does not translate.
 
 - Icons are Material ligatures (`mat-icon` text), which do not change with the UI
   language, so selectors use them: `more_vert` → `add_2` attaches a reference,
@@ -83,6 +99,7 @@ request the page signed would be circumvention. So:
 | --- | --- |
 | Image (any Nano Banana model) | 0 (daily quota) |
 | Omni Flash, 360p, 4 s | 4 |
+| Omni Flash, 720p, 4 / 6 / 8 / 10 s | 7 / 10 / 12 / 15 (not linear) |
 | Veo Lite / Fast / Quality | 10 / 20 / 100 |
 
 Prices are read from Flow's own settings pane before submitting (`--dry-run`,

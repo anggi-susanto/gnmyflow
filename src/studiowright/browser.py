@@ -140,52 +140,88 @@ async def place_window(session: ChromeSession, page: Page, *, visible: bool) -> 
             await cdp.detach()
 
 
+class DownloadCatcher:
+    """Catch the next download Chrome starts and save it into ``folder``.
+
+    Chrome was not launched by Playwright, so Playwright's download events do not fire.
+    Chrome's own download events are used instead, only while this catcher is active.
+    """
+
+    def __init__(self, session: ChromeSession, folder: Path) -> None:
+        self.session = session
+        self.folder = folder
+        self.names: dict[str, str] = {}
+        loop = asyncio.get_running_loop()
+        self.begun: asyncio.Future[str] = loop.create_future()
+        self.finished: asyncio.Future[str] = loop.create_future()
+        self._cdp: Any = None
+
+    async def __aenter__(self) -> DownloadCatcher:
+        self.folder.mkdir(parents=True, exist_ok=True)
+        self._cdp = await self.session.browser.new_browser_cdp_session()
+        self._cdp.on("Browser.downloadWillBegin", self._on_begin)
+        self._cdp.on("Browser.downloadProgress", self._on_progress)
+        await self._cdp.send(
+            "Browser.setDownloadBehavior",
+            {"behavior": "allowAndName", "downloadPath": str(self.folder), "eventsEnabled": True},
+        )
+        return self
+
+    async def __aexit__(self, *_: object) -> None:
+        await self._cdp.send("Browser.setDownloadBehavior", {"behavior": "default"})
+        await self._cdp.detach()
+
+    def _on_begin(self, event: dict[str, Any]) -> None:
+        self.names[event["guid"]] = event.get("suggestedFilename") or event["guid"]
+        if not self.begun.done():
+            self.begun.set_result(event["guid"])
+
+    def _on_progress(self, event: dict[str, Any]) -> None:
+        if self.finished.done() or event.get("guid") not in self.names:
+            return
+        if event.get("state") == "completed":
+            self.finished.set_result(event["guid"])
+        elif event.get("state") == "canceled":
+            self.finished.set_exception(RuntimeError("Chrome canceled the download"))
+
+    async def started(self, timeout_s: float) -> bool:
+        """True once a download has begun; False if none began within ``timeout_s``."""
+        try:
+            await asyncio.wait_for(asyncio.shield(self.begun), timeout=timeout_s)
+            return True
+        except TimeoutError:
+            return False
+
+    async def saved(self, timeout_s: float) -> Path:
+        """Wait for the download to finish and give it its suggested name."""
+        guid = await asyncio.wait_for(self.finished, timeout=timeout_s)
+        name = self.names[guid]
+        target = self.folder / name
+        number = 2
+        while target.exists():
+            target = self.folder / f"{Path(name).stem}-{number}{Path(name).suffix}"
+            number += 1
+        (self.folder / guid).rename(target)
+        return target
+
+
 async def capture_download(
     session: ChromeSession,
     trigger: Callable[[], Awaitable[None]],
     folder: Path,
     timeout_s: float = 900,
+    start_timeout_s: float | None = None,
 ) -> Path:
     """Run ``trigger`` and save the download it starts into ``folder``.
 
-    Chrome was not launched by Playwright, so Playwright's download events do not fire.
-    Chrome's own download events are used instead, for the duration of this call only.
+    ``start_timeout_s`` bounds the wait for the download to begin, so a click that starts
+    nothing fails quickly instead of after ``timeout_s``.
     """
-    folder.mkdir(parents=True, exist_ok=True)
-    cdp = await session.browser.new_browser_cdp_session()
-    names: dict[str, str] = {}
-    finished: asyncio.Future[str] = asyncio.get_running_loop().create_future()
-
-    def on_begin(event: dict[str, Any]) -> None:
-        names[event["guid"]] = event.get("suggestedFilename") or event["guid"]
-
-    def on_progress(event: dict[str, Any]) -> None:
-        if finished.done() or event.get("guid") not in names:
-            return
-        if event.get("state") == "completed":
-            finished.set_result(event["guid"])
-        elif event.get("state") == "canceled":
-            finished.set_exception(RuntimeError("Chrome canceled the download"))
-
-    cdp.on("Browser.downloadWillBegin", on_begin)
-    cdp.on("Browser.downloadProgress", on_progress)
-    await cdp.send(
-        "Browser.setDownloadBehavior",
-        {"behavior": "allowAndName", "downloadPath": str(folder), "eventsEnabled": True},
-    )
-    try:
+    async with DownloadCatcher(session, folder) as catcher:
         await trigger()
-        guid = await asyncio.wait_for(finished, timeout=timeout_s)
-        target = folder / names[guid]
-        number = 2
-        while target.exists():
-            target = folder / f"{Path(names[guid]).stem}-{number}{Path(names[guid]).suffix}"
-            number += 1
-        (folder / guid).rename(target)
-        return target
-    finally:
-        await cdp.send("Browser.setDownloadBehavior", {"behavior": "default"})
-        await cdp.detach()
+        if start_timeout_s is not None and not await catcher.started(start_timeout_s):
+            raise TimeoutError(f"no download began within {start_timeout_s:.0f} s")
+        return await catcher.saved(timeout_s)
 
 
 async def attach(playwright: Playwright, profile: str = paths.DEFAULT_PROFILE) -> ChromeSession:

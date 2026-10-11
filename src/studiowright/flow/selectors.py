@@ -29,8 +29,13 @@ MENTION_CHIP = f"{BOX} .mention-chip"
 EMPTY_SLOT = f"{BOX} button.empty-chip"
 
 PICKER_ITEM = f"{OVERLAY} .asset-item"
+#: The prompt box's own add button: a picker of the project's media, with search.
+PICKER_OPEN = f"{BOX} button{icon('add')}"
+PICKER_SEARCH = f"{OVERLAY} input"
 PICKER_ADD = f"{OVERLAY} button.detail-add-to-prompt-btn"
 
+#: The project grid is a virtual scroller: only tiles near the viewport exist.
+GRID_SCROLLER = ".cdk-virtual-scrollable"
 IMAGE_TILE = "flow-image-tile"
 VIDEO_TILE = "flow-video-tile"
 TILE_MENU = f"button{icon('more_vert')}"

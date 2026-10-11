@@ -131,3 +131,12 @@ def test_image_results_carry_workflow_ids() -> None:
 
 def test_workflow_ids_from_records() -> None:
     assert r.workflow_ids([[video_record(3, True)]]) == {CLIP: CLIP_WF}
+
+
+def test_credit_balance_from_a_video_submit_reply() -> None:
+    from studiowright.flow.replies import credit_balance
+
+    assert credit_balance([None, 427, [["media", "project"]], [["record"]]]) == 427
+    assert credit_balance([None, True, []]) is None
+    assert credit_balance(["x", 5, []]) is None
+    assert credit_balance({"credits": 5}) is None

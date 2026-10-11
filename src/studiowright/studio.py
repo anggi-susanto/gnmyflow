@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
+import logging
 import random
 import re
 import shutil
@@ -45,6 +47,8 @@ from studiowright.music.page import SESSION_URL as MUSIC_SESSION
 from studiowright.music.wire import Clip
 from studiowright.pacing import Governor
 from studiowright.store import Store
+
+log = logging.getLogger("studiowright.studio")
 
 SESSION_JS = r"""
 () => {
@@ -203,6 +207,7 @@ class Studio:
         for index, ref in enumerate(refs):
             if is_uuid(ref):
                 resolved.append(ref)
+                self._remember_name(flow, self.store.asset(flow.project_id, ref))
                 continue
             path = Path(ref).expanduser()
             if not path.is_file():
@@ -210,6 +215,7 @@ class Studio:
             digest = file_sha256(path)
             known = self.store.asset_by_hash(flow.project_id, digest)
             resolved.append(known.media_id if known else None)
+            self._remember_name(flow, known)
             if not known:
                 pending.append((index, path, digest))
         if pending:
@@ -226,9 +232,30 @@ class Studio:
                     flow.project_id, result.media_id, "image", result.name, digest, str(path)
                 )
                 resolved[index] = result.media_id
+                flow.names[result.media_id] = result.name
             # No reload: new uploads appear on the grid at once with their final id, while a
             # freshly loaded grid can lag one upload behind.
+        for media_id in resolved:
+            if media_id and media_id not in flow.positions:
+                position = self.store.grid_position(flow.project_id, media_id)
+                if position is not None:
+                    flow.positions[media_id] = position
         return [media_id for media_id in resolved if media_id]
+
+    @staticmethod
+    def _remember_name(flow: FlowPage, asset: Any) -> None:
+        """Tell the page an upload's Flow name, so it can find it by search."""
+        if asset is not None and asset.name and asset.source != "generated":
+            flow.names[asset.media_id] = asset.name
+
+    def _full_media_id(self, project_id: str, requested: str) -> str | None:
+        """A full media id for an id or a unique id prefix this profile has seen."""
+        if is_uuid(requested):
+            return requested.lower()
+        matches = self.store.assets_by_prefix(project_id, requested.lower())
+        if len(matches) > 1:
+            raise FlowError(f"{requested!r} matches {len(matches)} media; give more characters")
+        return matches[0] if matches else None
 
     async def upload(self, files: Sequence[str], project: str | None = None) -> dict[str, Any]:
         await self._locked()
@@ -252,34 +279,43 @@ class Studio:
         try:
             project_id = await self._project(project)
             flow = await FlowPage.open(self.session, project_id)
-            urls = await flow.fresh_media_urls()
-            if any(not any(m.startswith(r.lower()) for m in urls) for r in media_ids):
-                urls.update(await flow.fresh_media_urls())
             out = self._out_dir(out_dir)
             files = []
+            grid_urls: dict[str, dict[str, str]] | None = None
+            errors: dict[str, str] = {}
             for requested in media_ids:
-                matches = [m for m in urls if m.startswith(requested.lower())]
-                if len(matches) > 1:
-                    raise FlowError(
-                        f"{requested!r} matches {len(matches)} media; give more characters"
-                    )
-                media_id = matches[0] if matches else requested
-                found = urls.get(media_id, {})
-                url = found.get("video") or found.get("image")
-                if not url:
-                    raise FlowError(f"no downloadable file for {media_id} in this project (yet)")
-                default = ".mp4" if "video" in found else ".jpg"
-                if size:
-                    workflow_id = found.get("workflow")
-                    if not workflow_id:
-                        raise FlowError(f"cannot open {media_id} to download size {size}")
-                    saved = await flow.download_size(workflow_id, size, out)
-                    target = _unique(out / f"{media_id}-{size}{saved.suffix or default}")
-                    saved.rename(target)
-                else:
-                    target = await flow.download(url, out / f"{media_id}{default}")
-                files.append(str(target))
-            return {"project_id": project_id, "files": files}
+                try:
+                    media_id = self._full_media_id(project_id, requested)
+                    if media_id is None:
+                        # An unknown prefix: look it up among the media the grid page knows.
+                        grid_urls = grid_urls or await flow.fresh_media_urls()
+                        matches = [m for m in grid_urls if m.startswith(requested.lower())]
+                        if len(matches) != 1:
+                            raise FlowError(
+                                f"{requested!r} matches {len(matches)} media; give the full id"
+                            )
+                        media_id = matches[0]
+                    # Each medium's own edit view opens by id, however far down the grid.
+                    if size:
+                        saved = await flow.download_size(media_id, size, out, back=False)
+                        target = _unique(out / f"{media_id}-{size}{saved.suffix}")
+                        saved.rename(target)
+                    else:
+                        found = await flow.edit_view_urls(media_id)
+                        url = found.get("video") or found.get("image")
+                        if not url:
+                            raise FlowError(f"no downloadable file for {media_id} (yet)")
+                        default = ".mp4" if "video" in found else ".jpg"
+                        target = await flow.download(url, out / f"{media_id}{default}")
+                    files.append(str(target))
+                except FlowError as exc:
+                    # One medium's problem must not cost the others in a bulk download.
+                    errors[requested] = str(exc)
+                    log.warning("download of %s failed: %s", requested, exc)
+            await flow.page.goto(flow.url, wait_until="domcontentloaded")
+            if errors and not files:
+                raise FlowError("; ".join(f"{k}: {v}" for k, v in errors.items()))
+            return {"project_id": project_id, "files": files, "errors": errors}
         finally:
             self._lock.release()
 
@@ -474,8 +510,14 @@ class Studio:
                 "files": files,
                 "media_ids": [c.media_id for c in clips],
                 "credits": credits,
+                "credits_left": flow.credits_left,
                 "seconds": round(time.time() - started, 1),
             }
+            if flow.credits_left is not None:
+                self.store.set_setting(
+                    f"flow.credits.{self.profile}",
+                    json.dumps({"credits": flow.credits_left, "at": time.time()}),
+                )
             self.store.update_job(job_id, status="done", result=result, finished=time.time())
             return result
         except BaseException as exc:

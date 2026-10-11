@@ -71,6 +71,9 @@ organise or socialise songs rather than make them.
   it only when the user passes `--confirm-rights` / `confirm_rights`.
 - A cover prompt closes its popover at once and draws in the background; the song must
   not be submitted until the preview image has loaded.
+- Once, Generate opened a new session but sent nothing (no tool call, nothing spent).
+  StudioWright now watches for the work-starting POST; without one within 45 s it
+  presses Generate (or Send) once more, and other actions fail at once.
 - Templates sometimes fail on Flow Music's side (seen for Player and Simple); another
   template or a retry usually works.
 

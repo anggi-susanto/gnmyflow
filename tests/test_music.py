@@ -219,3 +219,20 @@ def test_result_kinds_use_flow_music_op_types() -> None:
     kinds = page.SONG_KINDS | page.EDIT_KINDS | page.TRIM_KINDS | page.STEM_KINDS
     assert all(kind.startswith("audio__") for kind in kinds)
     assert "audio__render_edit" in page.EDIT_KINDS
+
+
+class _QuietPage:
+    """A page that never sends or receives anything."""
+
+    def on(self, *_: Any) -> None:
+        pass
+
+    def remove_listener(self, *_: Any) -> None:
+        pass
+
+
+async def test_watch_reports_a_job_that_never_started() -> None:
+    from studiowright.music.page import NotStarted, Watch
+
+    with Watch(_QuietPage()) as watch, pytest.raises(NotStarted):  # type: ignore[arg-type]
+        await watch.wait(timeout_s=10, min_clips=1, need_turn=True, start_s=0.5)

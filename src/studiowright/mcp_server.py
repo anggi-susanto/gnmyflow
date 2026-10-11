@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -418,6 +419,8 @@ async def flow_status(profile: str | None = None, limit: int = 10) -> dict[str, 
         "projects": [{"id": r["id"], "title": r["title"]} for r in store.projects(name)],
         "jobs": jobs,
         "pacing": Governor(store, name).status(),
+        # Flow reports its balance only when a video is submitted; this is the latest.
+        "flow_credits_last_seen": json.loads(store.get_setting(f"flow.credits.{name}") or "null"),
     }
 
 

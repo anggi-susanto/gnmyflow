@@ -8,6 +8,7 @@ listeners, to learn ids, signed URLs and status.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import time
@@ -17,7 +18,7 @@ from pathlib import Path
 
 from playwright.async_api import FileChooser, Locator, Page, Request, Response
 
-from studiowright.browser import ChromeSession, capture_download, ensure_rendering
+from studiowright.browser import ChromeSession, DownloadCatcher, ensure_rendering
 from studiowright.flow import batchexecute as be
 from studiowright.flow import replies
 from studiowright.flow import selectors as s
@@ -57,9 +58,70 @@ class VideoClip:
     workflow_id: str | None = None
 
 
+#: How long Flow may upscale before the sized download begins.
+UPSCALE_START_S = 420
+
+
 def _rpc(url: str) -> str:
     match = re.search(r"[?&]rpcids=([A-Za-z0-9]+)", url)
     return match.group(1) if match else ""
+
+
+#: Scroll the grid's own container until ``img[data-media-id=…]`` exists. The grid lists
+#: newest first, so ``hint`` (the share of the project's media newer than the target) says
+#: where to start; the scan then runs to the end and, if needed, from the top. The mouse
+#: wheel stops long before the end of a large project.
+SCAN_JS = r"""
+async ([selector, scrollerSelector, hint]) => {
+  const scroller = document.querySelector(scrollerSelector) || [...document.querySelectorAll('*')]
+    .filter((e) => /(auto|scroll)/.test(getComputedStyle(e).overflowY)
+      && e.scrollHeight > e.clientHeight + 50)
+    .sort((a, b) => b.scrollHeight - a.scrollHeight)[0];
+  if (!scroller) return false;
+  const pause = (ms) => new Promise((r) => setTimeout(r, ms));
+  const look = async () => {
+    for (let wait = 0; wait < 6; wait++) {
+      const img = document.querySelector(selector);
+      if (img) { img.scrollIntoView({block: 'center'}); await pause(200); return true; }
+      await pause(60);
+    }
+    return false;
+  };
+  const sweep = async (from, until) => {
+    scroller.scrollTop = from;
+    await pause(250);
+    let still = 0;
+    for (let step = 0; step < 2000; step++) {
+      if (await look()) return true;
+      const before = scroller.scrollTop;
+      if (until !== null && before >= until) return false;
+      scroller.scrollTop = before + scroller.clientHeight * 0.85;
+      await pause(120);
+      still = scroller.scrollTop === before ? still + 1 : 0;
+      if (still >= 2) return false;
+    }
+    return false;
+  };
+  const start = hint === null ? 0
+    : Math.max(0, hint * scroller.scrollHeight
+        - Math.max(4 * scroller.clientHeight, 0.1 * scroller.scrollHeight));
+  if (await sweep(start, null)) return true;
+  return start > 0 ? sweep(0, start + scroller.clientHeight) : false;
+}
+"""
+
+
+#: A grid tile's title (Flow names each medium), without icon ligatures or the ellipsis.
+TILE_TITLE_JS = r"""
+(img) => {
+  const tile = img.closest('flow-image-tile, flow-video-tile');
+  if (!tile) return null;
+  const copy = tile.cloneNode(true);
+  copy.querySelectorAll('mat-icon, img').forEach((e) => e.remove());
+  const text = copy.textContent.replace(/\s+/g, ' ').replace(/…$/, '').trim();
+  return text || null;
+}
+"""
 
 
 def _asb_token(src: str) -> str | None:
@@ -135,6 +197,13 @@ class FlowPage:
         self.page = page
         self.project_id = project_id
         self._session = session
+        #: Flow's display names of media, where known (uploads keep their file name), so
+        #: the prompt box's picker can find them by search instead of scrolling the grid.
+        self.names: dict[str, str] = {}
+        #: Where media sit in the newest-first grid (0 top, 1 bottom), where known.
+        self.positions: dict[str, float] = {}
+        #: Flow's credit balance after the last video submit, when its reply says.
+        self.credits_left: int | None = None
 
     @property
     def session(self) -> ChromeSession:
@@ -150,7 +219,9 @@ class FlowPage:
     async def open(cls, session: ChromeSession, project_id: str) -> FlowPage:
         flow = cls(await session.page_for(f"{FLOW_ROOT}project/{project_id}"), project_id, session)
         await ensure_rendering(session, flow.page)
-        if not flow.page.url.startswith(flow.url):
+        # Anything but the project page itself (an edit view left by an interrupted job,
+        # say) does not show the grid and prompt box StudioWright works with.
+        if flow.page.url.split("?")[0].split("#")[0].rstrip("/") != flow.url:
             await flow.page.goto(flow.url, wait_until="domcontentloaded")
         await flow.ready()
         return flow
@@ -330,25 +401,54 @@ class FlowPage:
         ordered = [by_name.get(Path(f).name) for f in files]
         return [r for r in ordered if r] if all(ordered) else results
 
-    async def _media_img(self, media_id: str, wait_s: float = 8) -> Locator:
-        """The grid image of ``media_id``. New media sits at the top; older media further
-        down, so look at the top first and only then scroll."""
+    async def _media_img(self, media_id: str) -> Locator:
+        """The grid image of ``media_id``, scrolling the grid until it is rendered."""
         img = self.page.locator(s.media_image(media_id)).first
         if await img.count():
             return img
-        await self.page.mouse.move(700, 400)
-        await self.page.mouse.wheel(0, -100_000)
-        deadline = time.monotonic() + wait_s
-        while time.monotonic() < deadline:
-            if await img.count():
-                return img
-            await asyncio.sleep(0.1)
-        for _ in range(25):
-            await self.page.mouse.wheel(0, 900)
-            await self.page.wait_for_timeout(300)
+        started = time.monotonic()
+        hint = self.positions.get(media_id)
+        found = await self.page.evaluate(SCAN_JS, [s.media_image(media_id), s.GRID_SCROLLER, hint])
+        if found:
+            log.info("found %s on the grid in %.1f s", media_id, time.monotonic() - started)
             if await img.count():
                 return img
         raise AssetNotFound(f"media {media_id} is not on the project grid")
+
+    async def _pick_by_name(self, media_id: str, slot: Locator | None = None) -> bool:
+        """Attach ``media_id`` from the prompt box's picker by searching its display name.
+
+        Only used when the name is known and unique (uploads are named after their
+        content hash), which avoids scrolling a large grid. ``slot`` opens a frame slot's
+        picker instead of the add button's. False when the picker does not offer exactly
+        one match; nothing is attached then.
+        """
+        name = self.names.get(media_id)
+        if not name:
+            return False
+        await (slot or self.page.locator(s.PICKER_OPEN).first).click()
+        search = self.page.locator(s.PICKER_SEARCH).first
+        try:
+            await search.wait_for(state="visible", timeout=5000)
+        except Exception:
+            await self.page.keyboard.press("Escape")
+            return False
+        await search.fill(name)
+        items = self.page.locator(s.PICKER_ITEM).filter(has_text=name)
+        deadline = time.monotonic() + 6
+        while time.monotonic() < deadline and await items.count() != 1:
+            await asyncio.sleep(0.2)
+        if await items.count() != 1:
+            await self.page.keyboard.press("Escape")
+            return False
+        await items.first.click()
+        add = self.page.locator(s.PICKER_ADD)
+        with contextlib.suppress(Exception):
+            await add.first.wait_for(state="visible", timeout=1500)
+        if await add.count():
+            await add.first.click()
+        log.info("attached %s (%s) from the picker", media_id, name)
+        return True
 
     async def _tile_menu(self, media_id: str, item_selector: str) -> None:
         img = await self._media_img(media_id)
@@ -369,6 +469,10 @@ class FlowPage:
     async def attach_reference(self, media_id: str) -> None:
         log.info("attach reference %s", media_id)
         before = await self.attachments()
+        visible = await self.page.locator(s.media_image(media_id)).count()
+        if not visible and await self._pick_by_name(media_id):
+            await self._wait_attachments(before + 1)
+            return
         await self._tile_menu(media_id, s.MENU_ADD_TO_PROMPT)
         await self._wait_attachments(before + 1)
 
@@ -380,15 +484,27 @@ class FlowPage:
 
     async def set_end_frame(self, media_id: str) -> None:
         log.info("end frame %s", media_id)
+        before = await self.attachments()
+        visible = await self.page.locator(s.media_image(media_id)).count()
+        if not visible and await self._pick_by_name(media_id, self.page.locator(s.EMPTY_SLOT).last):
+            await self._wait_attachments(before + 1)
+            return
         img = await self._media_img(media_id)
         token = _asb_token(await img.get_attribute("src") or "")
         if not token:
             raise AssetNotFound(f"media {media_id} has no thumbnail to match in the picker")
+        title = await img.evaluate(TILE_TITLE_JS)
         before = await self.attachments()
         await self.page.locator(s.EMPTY_SLOT).last.click()
         items = self.page.locator(s.PICKER_ITEM)
         await items.first.wait_for(state="visible", timeout=5000)
         match = items.filter(has=self.page.locator(f"img[src*='{token}']"))
+        if not await match.count() and title:
+            # The picker lists recent media first; search older ones by their title.
+            await self.page.locator(s.PICKER_SEARCH).first.fill(title)
+            deadline = time.monotonic() + 6
+            while time.monotonic() < deadline and not await match.count():
+                await asyncio.sleep(0.2)
         if not await match.count():
             await self.page.keyboard.press("Escape")
             raise AssetNotFound(f"media {media_id} is not offered in the frame picker")
@@ -467,6 +583,11 @@ class FlowPage:
                         continue
                     except be.MissingReply:
                         continue
+                    if rpc_id in VIDEO_SUBMIT_RPCS:
+                        balance = replies.credit_balance(payload)
+                        if balance is not None:
+                            self.credits_left = balance
+                            log.info("credits left: %s", balance)
                     for record in replies.video_records(payload, self.project_id):
                         active = record.status in (replies.STATUS_QUEUED, replies.STATUS_RUNNING)
                         if record.media_id not in new_ids and (
@@ -559,15 +680,35 @@ class FlowPage:
         await self.ready()
         return urls
 
+    async def edit_view_urls(self, media_id: str) -> dict[str, str]:
+        """Fresh signed URLs of one medium, from its own edit view (no grid needed)."""
+        found: dict[str, str] = {}
+        with ReplyWatch(self.page, ["as29s"]) as watch:
+            await self.page.goto(f"{self.url}/edit/{media_id}", wait_until="domcontentloaded")
+            started = last = time.monotonic()
+            while time.monotonic() - started < 20:
+                if await watch.wait(0.5):
+                    last = time.monotonic()
+                elif watch.bodies and time.monotonic() - last > 2.0:
+                    break
+        for rpc_id, _status, text in watch.bodies:
+            try:
+                payload = be.parse_reply(text, rpc_id)
+            except (be.RpcError, be.MissingReply):
+                continue
+            found.update(replies.media_urls(payload).get(media_id, {}))
+        return found
+
     async def download_size(
-        self, workflow_id: str, size: str, folder: Path, timeout_s: float = 900
+        self, item_id: str, size: str, folder: Path, timeout_s: float = 900, *, back: bool = True
     ) -> Path:
         """Download through the edit view's own menu, e.g. ``2K`` or ``1080p`` (upscaled).
 
         The size token is the start of the menu entry, which Flow does not translate.
         Upscaling happens in Flow and can take a while before the file arrives.
         """
-        await self.page.goto(f"{self.url}/edit/{workflow_id}", wait_until="domcontentloaded")
+        # The edit view opens by media id or by workflow id alike.
+        await self.page.goto(f"{self.url}/edit/{item_id}", wait_until="domcontentloaded")
         button = self.page.locator(s.EDIT_DOWNLOAD).first
         try:
             await button.wait_for(state="visible", timeout=15_000)
@@ -577,23 +718,40 @@ class FlowPage:
                 if time.monotonic() > deadline:
                     raise FlowError("the download button stayed disabled in the edit view")
                 await asyncio.sleep(0.25)
-            await button.click()
-            entries = self.page.locator(f"{s.OVERLAY} {s.MENU_ITEM}, {s.OVERLAY} button")
-            await entries.first.wait_for(state="visible", timeout=5000)
-            entry = entries.filter(
-                has_text=re.compile(rf"^\s*{re.escape(size)}(?![0-9A-Za-z])", re.IGNORECASE)
-            )
-            if not await entry.count():
-                offered = [" ".join(t.split()) for t in await entries.all_inner_texts()]
-                raise FlowError(f"size {size!r} is not offered; Flow offers: {offered}")
-            if await entry.first.is_disabled():
-                raise FlowError(f"size {size!r} is not available on this account")
-            return await capture_download(
-                self.session, entry.first.click, folder, timeout_s=timeout_s
-            )
+            async with DownloadCatcher(self.session, folder) as catcher:
+                await button.click()
+                # Uploads have no size menu: the button saves the original straight away.
+                if await catcher.started(2.5):
+                    saved = await catcher.saved(timeout_s)
+                    if size.upper() in ("1K", "ORIGINAL"):
+                        return saved
+                    saved.unlink(missing_ok=True)
+                    raise FlowError(
+                        f"Flow offers no {size} for {item_id}: it downloads only at its own "
+                        "size (uploaded images are not upscaled)"
+                    )
+                entries = self.page.locator(f"{s.OVERLAY} {s.MENU_ITEM}, {s.OVERLAY} button")
+                await entries.first.wait_for(state="visible", timeout=5000)
+                entry = entries.filter(
+                    has_text=re.compile(rf"^\s*{re.escape(size)}(?![0-9A-Za-z])", re.IGNORECASE)
+                )
+                if not await entry.count():
+                    offered = [" ".join(t.split()) for t in await entries.all_inner_texts()]
+                    raise FlowError(f"size {size!r} is not offered; Flow offers: {offered}")
+                if await entry.first.is_disabled():
+                    raise FlowError(f"size {size!r} is not available on this account")
+                await entry.first.click()
+                # Upscaling runs in Flow first: seconds for an image, minutes for a 4K clip.
+                if not await catcher.started(UPSCALE_START_S):
+                    raise FlowError(
+                        f"Flow did not start the {size} download within {UPSCALE_START_S} s"
+                    )
+                return await catcher.saved(timeout_s)
         finally:
-            await self.page.goto(self.url, wait_until="domcontentloaded")
-            await self.ready()
+            # Several downloads in a row skip the (slow, in a large project) grid between them.
+            if back:
+                await self.page.goto(self.url, wait_until="domcontentloaded")
+                await self.ready()
 
     async def download(self, url: str, target: Path) -> Path:
         response = await self.page.context.request.get(url)

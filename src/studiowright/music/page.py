@@ -17,7 +17,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from playwright.async_api import Page, Response
+from playwright.async_api import Page, Request, Response
 
 from studiowright.browser import ChromeSession, capture_download, ensure_rendering
 from studiowright.flow.page import FlowError
@@ -79,12 +79,22 @@ CLOCK_SKEW_S = 30
 #: How long results may lag behind Flow Music's own "done".
 RESULT_GRACE_S = 180
 
+#: Requests that start work on Flow Music's side (and may spend credits).
+_SUBMIT_PATHS = ("/producer/tool-call", "/conversation", "/producer/upload-audio")
+#: How long a pressed button may go without starting anything before it counts as not
+#: pressed (seen once: a session opened, nothing was sent, nothing was spent).
+START_GRACE_S = 45
+
 #: Replies whose failure means the action failed.
 _FAIL_PATHS = ("/producer", "/audio-create", "/conversation", "/video", "/download")
 
 
 def _input_after(label: str) -> str:
     return f"xpath=//*[normalize-space(text())='{label}']/following::input[1]"
+
+
+class NotStarted(FlowError):
+    """The action sent nothing to Flow Music, so nothing was spent; it is safe to retry."""
 
 
 class Watch:
@@ -110,14 +120,24 @@ class Watch:
         self.library: list[Clip] | None = None
         #: New songs of other kinds, kept to explain a result that never came.
         self.others: dict[str, str | None] = {}
+        #: Work-starting requests the page sent (see ``_SUBMIT_PATHS``).
+        self.submitted = 0
         self._seen = 0
 
     def __enter__(self) -> Watch:
         self.page.on("response", self._on_response)
+        self.page.on("request", self._on_request)
         return self
 
     def __exit__(self, *_: object) -> None:
         self.page.remove_listener("response", self._on_response)
+        self.page.remove_listener("request", self._on_request)
+
+    def _on_request(self, request: Request) -> None:
+        if request.method == "POST" and "/__api/" in request.url:
+            path = request.url.split("/__api", 1)[1].split("?")[0]
+            if path in _SUBMIT_PATHS:
+                self.submitted += 1
 
     def _on_response(self, response: Response) -> None:
         if "/__api/" in response.url:
@@ -203,10 +223,13 @@ class Watch:
         need_turn: bool = False,
         settle_s: float = 4.0,
         until: Callable[[Watch], bool] | None = None,
+        start_s: float | None = None,
     ) -> None:
         """Wait until the action's turn has ended, its songs are complete and nothing new
-        arrived for ``settle_s``."""
-        deadline = time.monotonic() + timeout_s
+        arrived for ``settle_s``. With ``start_s``, raise :class:`NotStarted` when nothing
+        was sent to Flow Music within that time."""
+        begun = time.monotonic()
+        deadline = begun + timeout_s
         settled_at: float | None = None
         finished_at: float | None = None
         while time.monotonic() < deadline:
@@ -215,6 +238,9 @@ class Watch:
                 await asyncio.wait_for(self.changed.wait(), timeout=1.0)
             if self.digest():
                 settled_at = None
+            idle = not (self.submitted or self.jobs or self.ops or self.clips)
+            if start_s is not None and idle and time.monotonic() - begun > start_s:
+                raise NotStarted("Flow Music did not start the job; nothing was spent")
             turn_done = self.jobs <= self.finished_jobs and (
                 not need_turn or bool(self.finished_jobs)
             )
@@ -497,13 +523,27 @@ class MusicPage:
         min_clips: int = 1,
         need_turn: bool = True,
         settle_s: float = 4.0,
+        press_again: bool = False,
     ) -> Watch:
-        with Watch(self.page, known, kinds) as watch:
-            await trigger()
-            await watch.wait(
-                timeout_s=timeout_s, min_clips=min_clips, need_turn=need_turn, settle_s=settle_s
-            )
-        return watch
+        """Run ``trigger`` and wait for its results. A trigger that sends nothing within
+        ``START_GRACE_S`` spent nothing; with ``press_again`` it is run once more."""
+        for attempt in (1, 2):
+            with Watch(self.page, known, kinds) as watch:
+                await trigger()
+                try:
+                    await watch.wait(
+                        timeout_s=timeout_s,
+                        min_clips=min_clips,
+                        need_turn=need_turn,
+                        settle_s=settle_s,
+                        start_s=START_GRACE_S,
+                    )
+                    return watch
+                except NotStarted:
+                    if attempt == 2 or not press_again:
+                        raise
+                    log.warning("nothing was sent to Flow Music; pressing again")
+        raise AssertionError("unreachable")
 
     async def generate(
         self,
@@ -518,7 +558,9 @@ class MusicPage:
             await self.page.get_by_role("button", name="Generate", exact=True).last.click()
             log.info("music generation submitted")
 
-        return await self._run(press, known=known, kinds=kinds, timeout_s=timeout_s)
+        return await self._run(
+            press, known=known, kinds=kinds, timeout_s=timeout_s, press_again=True
+        )
 
     async def variation(self, clip_id: str) -> Watch:
         await self.goto_song(clip_id)
@@ -674,7 +716,7 @@ class MusicPage:
             log.info("message sent to the Producer")
 
         return await self._run(
-            press, timeout_s=timeout_s, min_clips=0, need_turn=True, settle_s=6.0
+            press, timeout_s=timeout_s, min_clips=0, need_turn=True, settle_s=6.0, press_again=True
         )
 
 

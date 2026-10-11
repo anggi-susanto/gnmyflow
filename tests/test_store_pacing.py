@@ -77,3 +77,22 @@ def test_mark_interrupted_only_touches_unfinished_jobs(store: Store) -> None:
     assert store.job(running)["status"] == "interrupted"
     assert store.job(done)["status"] == "done"
     assert store.job(other)["status"] == "queued"
+
+
+def test_assets_by_prefix_and_source(tmp_path: Path) -> None:
+    store = Store(tmp_path / "s.db")
+    store.add_asset(
+        "p",
+        "675340df-4eb7-4a45-aaed-3b03a640d70a",
+        "image",
+        "sw-2a72e6e12d.jpg",
+        "h1",
+        "C:/ref.jpg",
+    )
+    store.add_asset(
+        "p", "675340aa-0000-0000-0000-000000000000", "image", "x.jpg", "h2", "generated"
+    )
+    assert store.assets_by_prefix("p", "675340d") == ["675340df-4eb7-4a45-aaed-3b03a640d70a"]
+    assert len(store.assets_by_prefix("p", "675340")) == 2
+    asset = store.asset_by_hash("p", "h1")
+    assert asset is not None and asset.source == "C:/ref.jpg" and asset.name == "sw-2a72e6e12d.jpg"

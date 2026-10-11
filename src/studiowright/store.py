@@ -48,6 +48,8 @@ class Asset:
     kind: str
     name: str | None
     sha256: str | None
+    #: "generated", or the local path an upload came from.
+    source: str | None = None
 
 
 class Store:
@@ -132,6 +134,30 @@ class Store:
             ).fetchone()
         return _asset(row) if row else None
 
+    def grid_position(self, project_id: str, media_id: str) -> float | None:
+        """Share of this project's known media newer than ``media_id`` (Flow's grid lists
+        newest first), or None when the medium is unknown."""
+        with self.connect() as db:
+            row = db.execute(
+                "SELECT created FROM assets WHERE project_id = ? AND media_id = ?",
+                (project_id, media_id),
+            ).fetchone()
+            if row is None:
+                return None
+            newer, total = db.execute(
+                "SELECT SUM(created > ?), COUNT(*) FROM assets WHERE project_id = ?",
+                (row[0], project_id),
+            ).fetchone()
+        return (newer or 0) / total if total else None
+
+    def assets_by_prefix(self, project_id: str, prefix: str) -> list[str]:
+        with self.connect() as db:
+            rows = db.execute(
+                "SELECT media_id FROM assets WHERE project_id = ? AND media_id LIKE ?",
+                (project_id, prefix + "%"),
+            ).fetchall()
+        return [row[0] for row in rows]
+
     def asset(self, project_id: str, media_id: str) -> Asset | None:
         with self.connect() as db:
             row = db.execute(
@@ -189,4 +215,6 @@ class Store:
 
 
 def _asset(row: sqlite3.Row) -> Asset:
-    return Asset(row["project_id"], row["media_id"], row["kind"], row["name"], row["sha256"])
+    return Asset(
+        row["project_id"], row["media_id"], row["kind"], row["name"], row["sha256"], row["source"]
+    )
