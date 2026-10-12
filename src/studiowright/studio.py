@@ -32,11 +32,13 @@ from studiowright.flow.page import (
     FLOW_ROOT,
     FlowError,
     FlowPage,
+    PartialUpload,
     UnusualActivity,
     UpscaleRefused,
     suffix_for,
 )
 from studiowright.flow.replies import is_uuid
+from studiowright.images import stage_for_upload
 from studiowright.music.options import (
     AudioFormat,
     ChatRequest,
@@ -234,19 +236,20 @@ class Studio:
                 pending.append((index, path, digest))
         if pending:
             paths.staging_dir().mkdir(parents=True, exist_ok=True)
+            # Large photos are scaled down first: Flow does not finish very large uploads.
             staged = []
-            for _index, path, digest in pending:
-                copy = paths.staging_dir() / f"sw-{digest[:10]}{path.suffix.lower()}"
-                if not copy.exists():
-                    shutil.copyfile(path, copy)
-                staged.append(copy)
-            results = await flow.upload(staged)
-            for (index, path, digest), result in zip(pending, results, strict=True):
-                self.store.add_asset(
-                    flow.project_id, result.media_id, "image", result.name, digest, str(path)
+            for entry in pending:
+                _index, path, digest = entry
+                staged.append(
+                    (stage_for_upload(path, paths.staging_dir() / f"sw-{digest[:10]}"), entry)
                 )
-                resolved[index] = result.media_id
-                flow.names[result.media_id] = result.name
+            try:
+                results = await flow.upload([copy for copy, _ in staged])
+            except PartialUpload as exc:
+                # Remember what did arrive, so a retry does not upload it a second time.
+                self._record_uploads(flow, staged, exc.results, resolved)
+                raise
+            self._record_uploads(flow, staged, results, resolved)
             # No reload: new uploads appear on the grid at once with their final id, while a
             # freshly loaded grid can lag one upload behind.
         for media_id in resolved:
@@ -255,6 +258,28 @@ class Studio:
                 if position is not None:
                     flow.positions[media_id] = position
         return [media_id for media_id in resolved if media_id]
+
+    def _record_uploads(
+        self,
+        flow: FlowPage,
+        staged: list[tuple[Path, tuple[int, Path, str]]],
+        results: Sequence[Any],
+        resolved: list[str | None],
+    ) -> None:
+        """Store finished uploads by content hash, matched to their staged file by name."""
+        by_name = {copy.name: entry for copy, entry in staged}
+        if all(r.name in by_name for r in results):
+            pairs = [(by_name[r.name], r) for r in results]
+        elif len(results) == len(staged):
+            pairs = [(entry, r) for (_copy, entry), r in zip(staged, results, strict=True)]
+        else:
+            pairs = []
+        for (index, path, digest), result in pairs:
+            self.store.add_asset(
+                flow.project_id, result.media_id, "image", result.name, digest, str(path)
+            )
+            resolved[index] = result.media_id
+            flow.names[result.media_id] = result.name
 
     @staticmethod
     def _remember_name(flow: FlowPage, asset: Any) -> None:

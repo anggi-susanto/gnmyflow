@@ -55,6 +55,15 @@ class UpscaleRefused(FlowError):
         self.unusual = unusual
 
 
+class PartialUpload(FlowError):
+    """Some files of an upload finished and some did not; ``results`` are the finished ones,
+    so they can be recorded and not uploaded again."""
+
+    def __init__(self, message: str, results: list[replies.UploadResult]) -> None:
+        super().__init__(message)
+        self.results = results
+
+
 class AssetNotFound(FlowError):
     """The media id is not on this project's grid."""
 
@@ -427,7 +436,7 @@ class FlowPage:
             except be.RpcError as exc:
                 _raise_for_refusal(exc)
         if len(results) < len(files):
-            raise FlowError(f"only {len(results)} of {len(files)} uploads finished")
+            raise PartialUpload(f"only {len(results)} of {len(files)} uploads finished", results)
         by_name = {r.name: r for r in results}
         ordered = [by_name.get(Path(f).name) for f in files]
         return [r for r in ordered if r] if all(ordered) else results
@@ -521,21 +530,38 @@ class FlowPage:
             await self._wait_attachments(before + 1)
             return
         img = await self._media_img(media_id)
-        token = _asb_token(await img.get_attribute("src") or "")
-        if not token:
-            raise AssetNotFound(f"media {media_id} has no thumbnail to match in the picker")
+        # A freshly generated medium's thumbnail can still be loading; give it a moment.
+        token = None
+        deadline = time.monotonic() + 10
+        while token is None:
+            token = _asb_token(await img.get_attribute("src") or "")
+            if token is None:
+                if time.monotonic() > deadline:
+                    break
+                with contextlib.suppress(Exception):
+                    await img.scroll_into_view_if_needed(timeout=1000)
+                await asyncio.sleep(0.25)
         title = await img.evaluate(TILE_TITLE_JS)
+        if token is None and not title:
+            raise AssetNotFound(f"media {media_id} has no thumbnail or title to find it by")
         before = await self.attachments()
         await self.page.locator(s.EMPTY_SLOT).last.click()
         items = self.page.locator(s.PICKER_ITEM)
         await items.first.wait_for(state="visible", timeout=5000)
-        match = items.filter(has=self.page.locator(f"img[src*='{token}']"))
+        if token:
+            match = items.filter(has=self.page.locator(f"img[src*='{token}']"))
+        else:
+            # No thumbnail to compare: accept the title only when it is unambiguous.
+            match = items.filter(has_text=title)
         if not await match.count() and title:
             # The picker lists recent media first; search older ones by their title.
             await self.page.locator(s.PICKER_SEARCH).first.fill(title)
             deadline = time.monotonic() + 6
             while time.monotonic() < deadline and not await match.count():
                 await asyncio.sleep(0.2)
+        if token is None and await match.count() != 1:
+            await self.page.keyboard.press("Escape")
+            raise AssetNotFound(f"media {media_id} could not be told apart in the frame picker")
         if not await match.count():
             await self.page.keyboard.press("Escape")
             raise AssetNotFound(f"media {media_id} is not offered in the frame picker")

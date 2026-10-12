@@ -1,8 +1,13 @@
 {
   "mcpServers": {
     "studiowright": {
-      "command": "${STUDIOWRIGHT_BIN:-sw}",
-      "args": ["mcp"],
+      "command": "uvx",
+      "args": [
+        "--from",
+        "${STUDIOWRIGHT_SOURCE:-git+https://github.com/umutkocak/studiowright@v0.2.3}",
+        "sw",
+        "mcp"
+      ],
       "timeout": 900000
     }
   }

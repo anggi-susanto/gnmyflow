@@ -159,6 +159,16 @@ uv tool install --python 3.13 -e .
 
 </details>
 
+### Updating
+
+- **Plugin** (MCP server and skill): `claude plugin update studiowright@studiowright`, or in
+  Claude Code `/plugin` → Installed → studiowright → Update now; then `/reload-plugins`.
+  Each plugin version runs the StudioWright release of the same version. To update
+  automatically, turn it on once: `/plugin` → Marketplaces → studiowright → Enable
+  auto-update.
+- **Command line**: `uv tool install --force git+https://github.com/umutkocak/studiowright@vX.Y.Z`
+  with the release you want (see [Releases](https://github.com/umutkocak/studiowright/releases)).
+
 ## Quick start
 
 **1. Sign in once.** Chrome opens on a profile that belongs to StudioWright only. Sign in
@@ -208,6 +218,9 @@ or inside Claude Code:
 /plugin marketplace add umutkocak/studiowright
 /plugin install studiowright@studiowright
 ```
+
+The plugin starts its own matching StudioWright release with `uvx`, so it needs only `uv`
+and Chrome; installing `sw` separately is for the command line.
 
 Then just ask:
 
@@ -514,8 +527,8 @@ template (`--template modern|simple|player`).
 <details>
 <summary><b>The MCP client cannot start the server</b></summary>
 
-Give the client the full path of `sw`, or set `STUDIOWRIGHT_BIN` for the Claude Code
-plugin. `sw mcp` run in a terminal should wait silently for input.
+Give the client the full path of `sw`. The Claude Code plugin needs `uvx` (part of uv) on
+the PATH. `sw mcp` run in a terminal should wait silently for input.
 </details>
 
 ## Configuration
@@ -529,7 +542,7 @@ plugin. `sw mcp` run in a terminal should wait silently for input.
 | `STUDIOWRIGHT_COOLDOWN_S` | pause after an unusual-activity refusal | 1800 s |
 | `STUDIOWRIGHT_UPSCALE_GAP_S`, `STUDIOWRIGHT_UPSCALE_JITTER_S` | spacing of upscaled downloads | 60 s + 0-20 s |
 | `STUDIOWRIGHT_UPSCALE_COOLDOWN_S` | pause of upscales after a refusal | 3600 s |
-| `STUDIOWRIGHT_BIN` | the `sw` the Claude Code plugin starts | `sw` |
+| `STUDIOWRIGHT_SOURCE` | what the Claude Code plugin runs with `uvx --from` (e.g. a local checkout) | the plugin's own release |
 
 Several Google accounts? Give each one its own profile: `sw --profile work auth login`,
 then `sw --profile work image …`.

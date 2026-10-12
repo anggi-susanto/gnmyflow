@@ -1,6 +1,6 @@
 [project]
 name = "studiowright"
-version = "0.2.2"
+version = "0.2.3"
 description = "StudioWright: a fast CLI and MCP server for Google Flow and Google Flow Music. Unofficial; not affiliated with Google."
 readme = "README.md"
 license = "MIT"
@@ -11,6 +11,7 @@ dependencies = [
     "click>=8.5.0",
     "filelock>=4.1.0",
     "mcp[cli]>=2.3.0",
+    "pillow>=11.0",
     "platformdirs>=4.12.4",
     "playwright>=1.63.0",
 ]
