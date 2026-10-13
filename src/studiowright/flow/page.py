@@ -437,9 +437,30 @@ class FlowPage:
                 _raise_for_refusal(exc)
         if len(results) < len(files):
             raise PartialUpload(f"only {len(results)} of {len(files)} uploads finished", results)
+        await self._wait_for_tiles([r.media_id for r in results])
         by_name = {r.name: r for r in results}
         ordered = [by_name.get(Path(f).name) for f in files]
         return [r for r in ordered if r] if all(ordered) else results
+
+    async def _wait_for_tiles(self, media_ids: Sequence[str], timeout_s: float = 60) -> None:
+        """Wait until new uploads have their own grid tiles.
+
+        Flow first shows an upload as a "100%" placeholder without its media id, so the
+        tile menus (start frame, add to prompt) cannot reach it yet. In a new project the
+        placeholder stayed for over 10 s. New tiles appear at the top of the grid.
+        """
+        started = time.monotonic()
+        waiting = list(media_ids)
+        while True:
+            waiting = [m for m in waiting if not await self.page.locator(s.media_image(m)).count()]
+            if not waiting:
+                break
+            if time.monotonic() - started > timeout_s:
+                log.warning("uploads still without a tile after %.0f s: %s", timeout_s, waiting)
+                return
+            await self.page.evaluate(SCROLL_TOP_JS, s.GRID_SCROLLER)
+            await asyncio.sleep(0.5)
+        log.info("uploads on the grid after %.1f s", time.monotonic() - started)
 
     async def _media_img(self, media_id: str) -> Locator:
         """The grid image of ``media_id``, scrolling the grid until it is rendered."""
