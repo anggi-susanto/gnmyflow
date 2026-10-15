@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import shutil
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -127,8 +128,66 @@ def auth_list() -> None:
     names = sorted(p.name for p in root.iterdir() if p.is_dir()) if root.is_dir() else []
     if not names:
         click.echo("No profiles yet. Run `sw auth login`.")
+    width = max((len(name) for name in names), default=0)
     for name in names:
-        click.echo(name)
+        click.echo(f"{name:<{width}}  {_signed_in_as(name) or '(not signed in)'}")
+
+
+def _signed_in_as(profile: str) -> str | None:
+    """The Google account a profile is signed in to, from Chrome's own profile file."""
+    prefs = paths.profile_dir(profile) / "Default" / "Preferences"
+    try:
+        accounts = json.loads(prefs.read_text(encoding="utf-8")).get("account_info") or []
+    except (OSError, ValueError):
+        return None
+    emails = [a["email"] for a in accounts if a.get("email")]
+    return ", ".join(emails) or None
+
+
+def _profile_dir(name: str) -> Path:
+    try:
+        return paths.profile_dir(name)
+    except ValueError as exc:
+        raise click.ClickException(str(exc)) from None
+
+
+def _closed_profile(name: str) -> Path:
+    """An existing profile's folder, refused while its Chrome is running."""
+    folder = _profile_dir(name)
+    if not folder.is_dir():
+        raise click.ClickException(f"no profile named {name!r}; see `sw auth list`")
+    if chrome.endpoint_version(chrome.debug_port(name)):
+        raise click.ClickException(f"Chrome for profile {name!r} is running; close it first.")
+    return folder
+
+
+@auth.command("logout")
+@click.argument("name")
+@click.confirmation_option(prompt="Sign out and delete this profile from this computer?")
+def auth_logout(name: str) -> None:
+    """Delete profile NAME: its Chrome sign-in and StudioWright's records of it.
+
+    Downloaded files and the media in Flow are not touched; signing in again with
+    `sw --profile NAME auth login` brings the account back.
+    """
+    folder = _closed_profile(name)
+    shutil.rmtree(folder)
+    Store().forget_profile(name)
+    click.echo(f"Profile {name!r} removed.")
+
+
+@auth.command("rename")
+@click.argument("old")
+@click.argument("new")
+def auth_rename(old: str, new: str) -> None:
+    """Rename profile OLD to NEW, keeping its sign-in, projects and settings."""
+    folder = _closed_profile(old)
+    target = _profile_dir(new)
+    if target.exists():
+        raise click.ClickException(f"a profile named {new!r} already exists")
+    folder.rename(target)
+    Store().rename_profile(old, new)
+    click.echo(f"Profile {old!r} is now {new!r}.")
 
 
 # --- window -------------------------------------------------------------------------------

@@ -94,6 +94,46 @@ class Store:
                 (key, value),
             )
 
+    # --- profiles ---------------------------------------------------------------------
+    @staticmethod
+    def _profile_settings(db: sqlite3.Connection, profile: str) -> list[str]:
+        # Per-profile settings end in ".<profile>"; profile names contain no dots.
+        keys = [row["key"] for row in db.execute("SELECT key FROM settings")]
+        return [key for key in keys if key.rsplit(".", 1)[-1] == profile]
+
+    def forget_profile(self, profile: str) -> None:
+        """Remove everything recorded for a profile: projects, their assets, jobs, pacing."""
+        with self.transaction() as db:
+            db.execute(
+                "DELETE FROM assets WHERE project_id IN "
+                "(SELECT id FROM projects WHERE profile = ?)",
+                (profile,),
+            )
+            db.execute("DELETE FROM projects WHERE profile = ?", (profile,))
+            db.execute("DELETE FROM jobs WHERE profile = ?", (profile,))
+            # Music and upscales pace as "<profile>:music" and "<profile>:upscale".
+            db.execute(
+                "DELETE FROM pacing WHERE profile = ? OR substr(profile, 1, ?) = ?",
+                (profile, len(profile) + 1, profile + ":"),
+            )
+            for key in self._profile_settings(db, profile):
+                db.execute("DELETE FROM settings WHERE key = ?", (key,))
+
+    def rename_profile(self, old: str, new: str) -> None:
+        with self.transaction() as db:
+            db.execute("UPDATE projects SET profile = ? WHERE profile = ?", (new, old))
+            db.execute("UPDATE jobs SET profile = ? WHERE profile = ?", (new, old))
+            db.execute(
+                "UPDATE pacing SET profile = ? || substr(profile, ?) "
+                "WHERE profile = ? OR substr(profile, 1, ?) = ?",
+                (new, len(old) + 1, old, len(old) + 1, old + ":"),
+            )
+            for key in self._profile_settings(db, old):
+                db.execute(
+                    "UPDATE settings SET key = ? WHERE key = ?",
+                    (key[: -len(old)] + new, key),
+                )
+
     # --- projects ---------------------------------------------------------------------
     def add_project(self, project_id: str, profile: str, title: str | None) -> None:
         with self.connect() as db:

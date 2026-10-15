@@ -544,8 +544,22 @@ the PATH. `sw mcp` run in a terminal should wait silently for input.
 | `STUDIOWRIGHT_UPSCALE_COOLDOWN_S` | pause of upscales after a refusal | 3600 s |
 | `STUDIOWRIGHT_SOURCE` | what the Claude Code plugin runs with `uvx --from` (e.g. a local checkout) | the plugin's own release |
 
-Several Google accounts? Give each one its own profile: `sw --profile work auth login`,
-then `sw --profile work image …`.
+### Several Google accounts
+
+Each profile is one signed-in Google account with its own Chrome, queue and credits.
+Profiles run in parallel; jobs on the same profile take turns.
+
+```bash
+sw --profile account-1 auth login     # name it as you like; sign in, close the window
+sw --profile account-1 image "…"      # or set STUDIOWRIGHT_PROFILE=account-1
+sw auth list                          # each profile and the account it is signed in to
+sw auth rename account-1 studio       # keeps the sign-in, projects and settings
+sw auth logout studio                 # removes the profile from this computer
+```
+
+`logout` deletes only the profile's Chrome data and StudioWright's records of it.
+Downloaded files stay where they are, and the projects stay in your Google account.
+Both `rename` and `logout` wait until that profile's Chrome is closed (`sw stop`).
 
 ## Development
 

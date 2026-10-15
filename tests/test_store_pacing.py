@@ -107,3 +107,47 @@ def test_upscales_are_paced_apart_from_generations(tmp_path: Path) -> None:
     with pytest.raises(CoolingDown):
         upscale.reserve()
     assert generate.reserve() == 0  # generations are not paused by an upscale refusal
+
+
+def _profile_rows(store: Store) -> dict[str, list]:
+    with store.connect() as db:
+        return {
+            "projects": [tuple(r) for r in db.execute("SELECT id, profile FROM projects")],
+            "assets": [r[0] for r in db.execute("SELECT media_id FROM assets")],
+            "jobs": [r[0] for r in db.execute("SELECT profile FROM jobs")],
+            "pacing": sorted(r[0] for r in db.execute("SELECT profile FROM pacing")),
+            "settings": sorted(r[0] for r in db.execute("SELECT key FROM settings")),
+        }
+
+
+@pytest.fixture
+def two_profiles(store: Store) -> Store:
+    for profile, project in (("a", "p1"), ("ab", "p2")):
+        store.add_project(project, profile, None)
+        store.add_asset(project, f"m-{project}", "image")
+        store.create_job("image", profile, project, {})
+        store.set_setting(f"project.default.{profile}", project)
+        for lane in (profile, f"{profile}:music", f"{profile}:upscale"):
+            with store.connect() as db:
+                db.execute("INSERT INTO pacing (profile) VALUES (?)", (lane,))
+    return store
+
+
+def test_forget_profile_leaves_other_profiles(two_profiles: Store) -> None:
+    two_profiles.forget_profile("a")
+    rows = _profile_rows(two_profiles)
+    assert rows["projects"] == [("p2", "ab")]
+    assert rows["assets"] == ["m-p2"]
+    assert rows["jobs"] == ["ab"]
+    assert rows["pacing"] == ["ab", "ab:music", "ab:upscale"]
+    assert rows["settings"] == ["project.default.ab"]
+
+
+def test_rename_profile_moves_every_record(two_profiles: Store) -> None:
+    two_profiles.rename_profile("a", "main")
+    rows = _profile_rows(two_profiles)
+    assert sorted(rows["projects"]) == [("p1", "main"), ("p2", "ab")]
+    assert sorted(rows["jobs"]) == ["ab", "main"]
+    assert rows["pacing"] == ["ab", "ab:music", "ab:upscale", "main", "main:music", "main:upscale"]
+    assert two_profiles.get_setting("project.default.main") == "p1"
+    assert two_profiles.get_setting("project.default.a") is None
