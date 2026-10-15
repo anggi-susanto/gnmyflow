@@ -4,7 +4,7 @@
       "command": "uvx",
       "args": [
         "--from",
-        "${STUDIOWRIGHT_SOURCE:-git+https://github.com/umutkocak/studiowright@v0.2.5}",
+        "${STUDIOWRIGHT_SOURCE:-git+https://github.com/umutkocak/studiowright@v0.2.6}",
         "sw",
         "mcp"
       ],
