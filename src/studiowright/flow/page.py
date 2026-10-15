@@ -269,6 +269,7 @@ class FlowPage:
     # --- page state -------------------------------------------------------------------
     async def ready(self, timeout_s: float = 30) -> None:
         try:
+            await self._leave_agent_mode(timeout_s)
             await self.page.locator(s.READY).first.wait_for(
                 state="visible", timeout=timeout_s * 1000
             )
@@ -278,6 +279,19 @@ class FlowPage:
                 "is the profile signed in?"
             ) from exc
         await self.clear_blockers()
+
+    async def _leave_agent_mode(self, timeout_s: float) -> None:
+        """Close the agent panel and switch the prompt box out of agent mode, if this account has them."""
+        ready = self.page.locator(s.READY).first
+        for _ in range(int(timeout_s * 2)):
+            if await ready.is_visible():
+                return
+            for selector in (s.AGENT_PANEL_CLOSE, s.AGENT_CHIP_ON):
+                button = self.page.locator(selector).first
+                if await button.count() and await button.is_visible():
+                    await button.click()
+                    await self.page.wait_for_timeout(500)
+            await self.page.wait_for_timeout(500)
 
     async def clear_blockers(self) -> None:
         for selector in (s.COOKIE_REJECT, s.DIALOG_CLOSE):

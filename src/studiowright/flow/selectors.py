@@ -14,6 +14,10 @@ def icon(name: str) -> str:
 
 
 READY = ".settings-trigger-button"
+#: Newer Flow accounts (seen 15 Oct 2026) open projects in "agent" mode: a side chat panel and an
+#: "Agent" chip in the prompt box. The classic settings button appears once both are off.
+AGENT_PANEL_CLOSE = f"flow-agent-panel button.header-action{icon('close')}"
+AGENT_CHIP_ON = "button.agent-mode-chip.agent-mode-chip-checked"
 OVERLAY = ".cdk-overlay-pane"
 SETTINGS_PANE = f"{OVERLAY}:has([role='radiogroup'])"
 RADIO = "[role='radio']"
