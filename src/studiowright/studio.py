@@ -134,12 +134,12 @@ class Studio:
         self._playwright: Playwright | None = None
         self._session: ChromeSession | None = None
         paths.locks_dir().mkdir(parents=True, exist_ok=True)
-        self._lock = FileLock(str(paths.locks_dir() / f"{profile}.lock"))
+        self._lock = FileLock(str(paths.locks_dir() / f"{profile}.lock"), thread_local=False)
         # Flow Music runs in its own tab, so it has its own lock and pacing.
-        self._music_lock = FileLock(str(paths.locks_dir() / f"{profile}-music.lock"))
+        self._music_lock = FileLock(str(paths.locks_dir() / f"{profile}-music.lock"), thread_local=False)
         self.music_governor = Governor(self.store, f"{profile}:music")
         # Downloads submit nothing, so they run in a tab of their own beside generations.
-        self._download_lock = FileLock(str(paths.locks_dir() / f"{profile}-download.lock"))
+        self._download_lock = FileLock(str(paths.locks_dir() / f"{profile}-download.lock"), thread_local=False)
         # Flow refuses bulk upscaling with "unusual activity" (seen after ~45 2K downloads
         # in 37 min), so upscales are spaced and pause on a refusal, apart from generations.
         self.upscale_governor = Governor(
@@ -469,7 +469,11 @@ class Studio:
 
     async def image(self, request: ImageRequest) -> dict[str, Any]:
         await self._locked()
-        project_id = await self._project(request.project)
+        try:
+            project_id = await self._project(request.project)
+        except BaseException:
+            self._lock.release()  # the main try below starts after this; a failed lookup must not keep the profile locked
+            raise
         job_id = self.store.create_job(
             "image",
             self.profile,
@@ -523,7 +527,11 @@ class Studio:
 
     async def video(self, request: VideoRequest) -> dict[str, Any]:
         await self._locked()
-        project_id = await self._project(request.project)
+        try:
+            project_id = await self._project(request.project)
+        except BaseException:
+            self._lock.release()  # the main try below starts after this; a failed lookup must not keep the profile locked
+            raise
         options = request.options
         job_id = self.store.create_job(
             "video",
