@@ -164,7 +164,7 @@ class DownloadCatcher:
 
     def __init__(self, session: ChromeSession, folder: Path) -> None:
         self.session = session
-        self.folder = folder
+        self.folder = folder.resolve()  # Chrome cancels downloads into a relative folder
         self.names: dict[str, str] = {}
         loop = asyncio.get_running_loop()
         self.begun: asyncio.Future[str] = loop.create_future()
