@@ -281,7 +281,7 @@ class FlowPage:
         await self.clear_blockers()
 
     async def _leave_agent_mode(self, timeout_s: float) -> None:
-        """Close the agent panel and switch the prompt box out of agent mode, if this account has them."""
+        """Close the agent panel and leave agent mode, where the account has them."""
         ready = self.page.locator(s.READY).first
         for _ in range(int(timeout_s * 2)):
             if await ready.is_visible():

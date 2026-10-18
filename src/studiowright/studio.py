@@ -136,10 +136,14 @@ class Studio:
         paths.locks_dir().mkdir(parents=True, exist_ok=True)
         self._lock = FileLock(str(paths.locks_dir() / f"{profile}.lock"), thread_local=False)
         # Flow Music runs in its own tab, so it has its own lock and pacing.
-        self._music_lock = FileLock(str(paths.locks_dir() / f"{profile}-music.lock"), thread_local=False)
+        self._music_lock = FileLock(
+            str(paths.locks_dir() / f"{profile}-music.lock"), thread_local=False
+        )
         self.music_governor = Governor(self.store, f"{profile}:music")
         # Downloads submit nothing, so they run in a tab of their own beside generations.
-        self._download_lock = FileLock(str(paths.locks_dir() / f"{profile}-download.lock"), thread_local=False)
+        self._download_lock = FileLock(
+            str(paths.locks_dir() / f"{profile}-download.lock"), thread_local=False
+        )
         # Flow refuses bulk upscaling with "unusual activity" (seen after ~45 2K downloads
         # in 37 min), so upscales are spaced and pause on a refusal, apart from generations.
         self.upscale_governor = Governor(
@@ -472,7 +476,8 @@ class Studio:
         try:
             project_id = await self._project(request.project)
         except BaseException:
-            self._lock.release()  # the main try below starts after this; a failed lookup must not keep the profile locked
+            # The main try below starts after this; a failed lookup must not keep the lock.
+            self._lock.release()
             raise
         job_id = self.store.create_job(
             "image",
@@ -530,7 +535,8 @@ class Studio:
         try:
             project_id = await self._project(request.project)
         except BaseException:
-            self._lock.release()  # the main try below starts after this; a failed lookup must not keep the profile locked
+            # The main try below starts after this; a failed lookup must not keep the lock.
+            self._lock.release()
             raise
         options = request.options
         job_id = self.store.create_job(

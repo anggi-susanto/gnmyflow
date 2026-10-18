@@ -76,6 +76,9 @@ class ChromeSession:
             await page.close()
         page = await self._new_window()
         if role:
+            # Chrome clears window.name when about:blank navigates to another site, so name
+            # the tab once it is on the site; same-site navigations keep the name.
+            await page.goto(url_prefix, wait_until="domcontentloaded")
             await page.evaluate("(name) => { window.name = name; }", f"sw-{role}")
         return page
 

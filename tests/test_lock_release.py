@@ -7,7 +7,9 @@ from studiowright import paths
 from studiowright.studio import Studio
 
 
-def test_failed_project_lookup_releases_the_profile_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_failed_project_lookup_releases_the_profile_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv(paths.HOME_ENV, str(tmp_path))
     studio = Studio("test")
 
