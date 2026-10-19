@@ -605,6 +605,7 @@ def music() -> None:
     show_default=True,
 )
 @click.option("--title", help="Song title.")
+@click.option("--timeout", type=int, default=None, help="Generation timeout in seconds.")
 @_cover_options
 @_song_options
 @click.pass_obj
@@ -618,6 +619,7 @@ def music_create(
     seed: int | None,
     model: str,
     title: str | None,
+    timeout: int | None,
     cover: Path | None,
     cover_prompt: str | None,
     audio_format: str,
@@ -638,6 +640,7 @@ def music_create(
             out_dir=out,
             cover_image=cover,
             cover_prompt=cover_prompt,
+            timeout_s=timeout,
         )
     )
     _emit_music(_run(lambda studio: studio.music(request), obj["profile"]), as_json)
@@ -659,6 +662,7 @@ def _edit(
     audio_format: str,
     out: Path | None,
     as_json: bool,
+    timeout: int | None = None,
 ) -> None:
     request = _option_error(
         lambda: EditRequest.build(
@@ -674,6 +678,7 @@ def _edit(
             out_dir=out,
             cover_image=cover,
             cover_prompt=cover_prompt,
+            timeout_s=timeout,
         )
     )
     _emit_music(_run(lambda studio: studio.music_edit(request), obj["profile"]), as_json)
@@ -702,6 +707,7 @@ def music_extend(obj: dict[str, str], song: str, lyrics_file: Path | None, **kw:
 @_lyrics_options
 @click.option("--seed", type=int)
 @click.option("--title", help="Title of the new song.")
+@click.option("--timeout", type=int, default=None, help="Generation timeout in seconds.")
 @_cover_options
 @_song_options
 @click.pass_obj
@@ -833,6 +839,21 @@ def music_credits(obj: dict[str, str]) -> None:
     """Flow Music credit balance and plan."""
     result = _run(lambda studio: studio.music_library(0), obj["profile"])
     click.echo(f"{result['credits_remaining']} credits ({result['plan']})")
+
+
+@music.command("inspect")
+@click.argument("song")
+@click.option("--json", "as_json", is_flag=True, default=True, help="Print JSON.")
+@click.pass_obj
+def music_inspect(obj: dict[str, str], song: str, as_json: bool) -> None:
+    """Inspect capabilities (cover, remix, download) for SONG."""
+    result = _run(lambda studio: studio.music_inspect(song), obj["profile"])
+    if as_json:
+        click.echo(json.dumps(result, ensure_ascii=False, indent=1))
+    else:
+        click.echo(f"Song: {result.get('song')}")
+        for cap, ok in result.get("capabilities", {}).items():
+            click.echo(f"  {cap}: {'yes' if ok else 'no'}")
 
 
 @music.command("chat")

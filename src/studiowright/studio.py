@@ -702,7 +702,11 @@ class Studio:
             await self.music_governor.wait_turn()
             submitted = time.time()
             try:
-                clips = (await music.generate(kinds=SONG_KINDS)).ready_clips()
+                clips = (
+                    await music.generate(
+                        kinds=SONG_KINDS, timeout_s=request.timeout_s or 600
+                    )
+                ).ready_clips()
             except NotStarted:
                 raise
             except FlowError as exc:
@@ -749,7 +753,9 @@ class Studio:
                 await music.compose_edit(request, clip_id)
             region = await music.region_label()
             await self.music_governor.wait_turn()
-            watch = await music.generate(known={clip_id}, kinds=EDIT_KINDS)
+            watch = await music.generate(
+                known={clip_id}, kinds=EDIT_KINDS, timeout_s=request.timeout_s or 600
+            )
             songs = await self._save_songs(
                 music, watch.ready_clips(), request.audio_format, request.out_dir, job_id
             )
@@ -882,6 +888,15 @@ class Studio:
             return {"files": saved}
 
         return await self._music_job("music-download", {"songs": list(songs)}, work)
+
+    async def music_inspect(self, song: str) -> dict[str, Any]:
+        """Inspect capabilities (cover, remix, download) for song."""
+        async def work(job_id: str) -> dict[str, Any]:
+            music = await MusicPage.open(self.session, MUSIC_LIBRARY)
+            clip_id = await self._song(music, song)
+            return await music.inspect(clip_id)
+
+        return await self._music_job("music-inspect", {"song": song}, work)
 
     async def music_library(self, limit: int = 20) -> dict[str, Any]:
         """The newest songs in the account, with the credit balance and plan."""

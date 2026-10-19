@@ -12,6 +12,7 @@ import contextlib
 import json
 import logging
 import re
+import sys
 import time
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -402,11 +403,15 @@ class MusicPage:
             await button.first.click()
 
     async def compose(self, request: MusicRequest) -> None:
+        sys.stderr.write("__SW_STAGE__Opening Flow Music Studio\n")
+        sys.stderr.flush()
         page = self.page
         sound = page.locator(SOUND)
         if not await sound.is_visible():
             await page.locator(COMPOSE_TOGGLE).click()
         await sound.wait_for(state="visible", timeout=10_000)
+        sys.stderr.write("__SW_STAGE__Submitting lyrics & sound prompt\n")
+        sys.stderr.flush()
         await self._switch(INSTRUMENTAL, request.instrumental)
         if not request.instrumental:
             await page.locator(LYRICS).fill(request.lyrics or "")
@@ -568,6 +573,8 @@ class MusicPage:
         """Press the compose panel's Generate and wait for the new songs."""
 
         async def press() -> None:
+            sys.stderr.write("__SW_STAGE__Rendering audio on Flow server\n")
+            sys.stderr.flush()
             await self.page.get_by_role("button", name="Generate", exact=True).last.click()
             log.info("music generation submitted")
 
@@ -609,6 +616,8 @@ class MusicPage:
     async def download(self, clip: Clip | str, audio_format: AudioFormat, target: Path) -> Path:
         """Save one song: WAV/M4A from its storage URL when it is there, otherwise (and for
         MP3) through the song page's Download menu."""
+        sys.stderr.write("__SW_STAGE__Downloading audio file\n")
+        sys.stderr.flush()
         url = None
         if isinstance(clip, Clip):
             url = clip.wav_url if audio_format is AudioFormat.WAV else None
@@ -738,6 +747,35 @@ class MusicPage:
         return await self._run(
             press, timeout_s=timeout_s, min_clips=0, need_turn=True, settle_s=6.0, press_again=True
         )
+
+    async def inspect(self, clip_id: str) -> dict[str, Any]:
+        """Inspect capabilities (cover, remix, download) on the song page."""
+        await self.goto_song(clip_id)
+        can_cover = True
+        can_remix = True
+        can_download = True
+        try:
+            cover_btn = self.page.get_by_role("button", name="Cover", exact=False)
+            remix_btn = self.page.get_by_role("button", name="Remix", exact=False)
+            download_btn = self.page.get_by_role("button", name="Download", exact=False)
+            if await cover_btn.count():
+                can_cover = await cover_btn.first.is_enabled()
+            if await remix_btn.count():
+                can_remix = await remix_btn.first.is_enabled()
+            if await download_btn.count():
+                can_download = await download_btn.first.is_enabled()
+        except Exception:
+            pass
+
+        return {
+            "song": clip_id,
+            "capabilities": {
+                "cover": can_cover,
+                "remix": can_remix,
+                "download": can_download,
+            },
+            "reason": "",
+        }
 
 
 def stem_name(clip: Clip) -> str:

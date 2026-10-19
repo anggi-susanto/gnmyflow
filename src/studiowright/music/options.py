@@ -170,6 +170,7 @@ class MusicRequest:
     audio_format: AudioFormat = AudioFormat.WAV
     out_dir: Path | None = None
     cover: Cover | None = None
+    timeout_s: int | None = None
 
     @property
     def instrumental(self) -> bool:
@@ -190,6 +191,7 @@ class MusicRequest:
         out_dir: Path | None = None,
         cover_image: str | Path | None = None,
         cover_prompt: str | None = None,
+        timeout_s: int | None = None,
     ) -> MusicRequest:
         if not sound or not sound.strip():
             raise OptionError("describe the sound (style, instruments, mood)")
@@ -207,6 +209,7 @@ class MusicRequest:
             _format(audio_format),
             out_dir,
             Cover.build(cover_image, cover_prompt),
+            timeout_s=timeout_s,
         )
 
 
@@ -225,6 +228,7 @@ class EditRequest:
     audio_format: AudioFormat = AudioFormat.WAV
     out_dir: Path | None = None
     cover: Cover | None = None
+    timeout_s: int | None = None
 
     @classmethod
     def build(
@@ -242,6 +246,7 @@ class EditRequest:
         out_dir: Path | None = None,
         cover_image: str | Path | None = None,
         cover_prompt: str | None = None,
+        timeout_s: int | None = None,
     ) -> EditRequest:
         mode_ = mode if isinstance(mode, EditMode) else _member(EditMode, mode)
         start_s, end_s = parse_time(start), parse_time(end)
@@ -263,6 +268,7 @@ class EditRequest:
             _format(audio_format),
             out_dir,
             Cover.build(cover_image, cover_prompt),
+            timeout_s=timeout_s,
         )
 
 
