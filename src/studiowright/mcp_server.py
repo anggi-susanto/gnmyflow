@@ -23,12 +23,14 @@ from studiowright.flow.options import (
     VideoOptions,
 )
 from studiowright.music.options import (
+    DEFAULT_UPLOAD_TIMEOUT_S,
     AudioFormat,
     ChatRequest,
     EditRequest,
     MusicModel,
     MusicRequest,
     VideoTemplate,
+    validate_upload_timeout,
 )
 from studiowright.pacing import Governor
 from studiowright.store import Store
@@ -319,6 +321,7 @@ async def music_chat(
     out_dir: str | None = None,
     timeout_s: int = 900,
     profile: str | None = None,
+    upload_timeout_s: int = DEFAULT_UPLOAD_TIMEOUT_S,
 ) -> dict[str, Any]:
     """Talk to Flow Music's Producer agent, which can do everything the app can: write or
     edit lyrics, plan a song, remix your music, make an AI music video, and more.
@@ -328,6 +331,8 @@ async def music_chat(
     asks the user to confirm they have the rights to them, so set confirm_rights only
     when the user has said so. Songs the Producer makes during the turn are saved.
     Returns the reply text, any lyrics it wrote, suggested next steps and saved files.
+    upload_timeout_s: positive seconds for attached audio checks (default 1800), separate
+    from timeout_s for the Producer turn (default 900).
     Chatting is free; songs and videos it makes cost credits (videos can be expensive).
     """
     request = ChatRequest.build(
@@ -339,6 +344,7 @@ async def music_chat(
         audio_format=audio_format,
         out_dir=_out(out_dir),
         timeout_s=timeout_s,
+        upload_timeout_s=upload_timeout_s,
     )
     async with Studio(_profile(profile)) as studio:
         return await studio.music_chat(request)
@@ -346,13 +352,18 @@ async def music_chat(
 
 @server.tool()
 async def music_upload(
-    file: str, confirm_rights: bool = False, profile: str | None = None
+    file: str,
+    confirm_rights: bool = False,
+    profile: str | None = None,
+    timeout_s: int = DEFAULT_UPLOAD_TIMEOUT_S,
 ) -> dict[str, Any]:
     """Upload your own audio (max 40 MB) to Flow Music as a private song; returns its id
     for music_edit / music_stems. Flow Music asks the user to confirm they have the rights
-    to the file: set confirm_rights only when the user has said so."""
+    to the file: set confirm_rights only when the user has said so.
+    timeout_s: positive seconds to wait for upload checks (default 1800)."""
+    validate_upload_timeout(timeout_s)
     async with Studio(_profile(profile)) as studio:
-        return await studio.music_upload(file, confirm_rights=confirm_rights)
+        return await studio.music_upload(file, confirm_rights=confirm_rights, timeout_s=timeout_s)
 
 
 @server.tool()

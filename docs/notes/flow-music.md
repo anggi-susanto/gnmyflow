@@ -30,6 +30,24 @@ Not covered on purpose: playlists, spaces, projects, profile, publishing, sharin
 reporting, deleting, Turntable voting, likes, voice mode and microphone recording. They
 organise or socialise songs rather than make them.
 
+## Upload wait limits
+
+Audio upload checks can take much longer than a chat turn. `sw music upload FILE
+--confirm-rights --timeout 2400` sets the upload-check wait; `sw music chat "remix this"
+--audio FILE --confirm-rights --upload-timeout 2400` sets the same wait before sending
+the message. Both default to 1800 seconds and accept positive integer seconds. Chat's
+existing `--timeout` still controls only the Producer turn (default 900 seconds). These
+are not whole-command deadlines: browser setup, file selection, pacing and downloads
+are separate.
+
+Python uses `Studio.music_upload(..., timeout_s=1800)` and
+`ChatRequest.build(..., upload_timeout_s=1800)` (also a `ChatRequest` field).
+MCP's `music_upload` exposes `timeout_s=1800`; `music_chat` exposes
+`upload_timeout_s=1800`, separately from its `timeout_s=900`. Upload waits must be finite
+and strictly positive; Python accepts fractional seconds as well. Rights confirmation
+and rejection reasons are unchanged. Only the documented `complete` upload status is
+accepted; unknown statuses fail rather than returning a usable song id.
+
 ## Wire facts StudioWright reads (passively)
 
 - `GET /__api/billing/credits` → `data.credits_remaining`; `GET /__api/billing/subscription`

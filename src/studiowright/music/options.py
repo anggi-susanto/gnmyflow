@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -55,6 +56,15 @@ MAX_LENGTH_S = 180
 _LENGTH = re.compile(r"^\s*(?:(\d{1,2}):)?(\d{1,3})\s*$")
 _TIME = re.compile(r"^\s*(?:(\d{1,2}):)?(\d{1,3}(?:\.\d+)?)\s*$")
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+
+
+DEFAULT_UPLOAD_TIMEOUT_S = 1800
+
+
+def validate_upload_timeout(timeout_s: float) -> None:
+    """Upload waits must be finite and strictly positive (seconds)."""
+    if not math.isfinite(timeout_s) or timeout_s <= 0:
+        raise OptionError("upload timeout must be a finite, positive number of seconds")
 
 
 def parse_length(value: str | int | None) -> int | None:
@@ -268,6 +278,10 @@ class ChatRequest:
     audio_format: AudioFormat = AudioFormat.WAV
     out_dir: Path | None = None
     timeout_s: float = 900
+    upload_timeout_s: float = DEFAULT_UPLOAD_TIMEOUT_S
+
+    def __post_init__(self) -> None:
+        validate_upload_timeout(self.upload_timeout_s)
 
     @classmethod
     def build(
@@ -281,6 +295,7 @@ class ChatRequest:
         audio_format: AudioFormat | str = AudioFormat.WAV,
         out_dir: Path | None = None,
         timeout_s: float = 900,
+        upload_timeout_s: float = DEFAULT_UPLOAD_TIMEOUT_S,
     ) -> ChatRequest:
         if not message or not message.strip():
             raise OptionError("the message is empty")
@@ -305,6 +320,7 @@ class ChatRequest:
             _format(audio_format),
             out_dir,
             timeout_s,
+            upload_timeout_s,
         )
 
 

@@ -22,6 +22,7 @@ from playwright.async_api import Page, Request, Response
 from studiowright.browser import ChromeSession, capture_download, ensure_rendering
 from studiowright.flow.page import FlowError
 from studiowright.music.options import (
+    DEFAULT_UPLOAD_TIMEOUT_S,
     AudioFormat,
     Cover,
     EditMode,
@@ -30,6 +31,7 @@ from studiowright.music.options import (
     VideoTemplate,
     format_length,
     format_time,
+    validate_upload_timeout,
 )
 from studiowright.music.wire import UPLOAD_PENDING, Clip, Turn, clips_in, sse_events, upload_state
 
@@ -675,10 +677,11 @@ class MusicPage:
         await self.page.keyboard.press("Escape")
 
     async def upload_audio(
-        self, path: Path, *, confirm_rights: bool, timeout_s: float = 300
+        self, path: Path, *, confirm_rights: bool, timeout_s: float = DEFAULT_UPLOAD_TIMEOUT_S
     ) -> str:
         """Attach an audio file in the chat box; returns its song id once Flow Music has
         checked it. The file then works like any song (remix, stems, ...)."""
+        validate_upload_timeout(timeout_s)
         await self._attach_menu("Audio", confirm_rights)
         with Watch(self.page) as watch:
             await self.page.locator(AUDIO_INPUT).set_input_files(str(path))
@@ -689,9 +692,15 @@ class MusicPage:
                 )
 
             await watch.wait(timeout_s=timeout_s, until=checked, settle_s=0.5)
-        upload_id, (state, reason) = next(iter(watch.uploads.items()))
-        if state in ("failed", "error", "rejected"):
-            raise FlowError(f"Flow Music did not accept {path.name}: {reason or state}")
+        for state, reason in watch.uploads.values():
+            if state in ("failed", "error", "rejected"):
+                raise FlowError(f"Flow Music did not accept {path.name}: {reason or state}")
+            if state != "complete":
+                raise FlowError(
+                    f"Flow Music returned unknown upload status {state!r} for {path.name}"
+                    + (f": {reason}" if reason else "")
+                )
+        upload_id, (state, _) = next(iter(watch.uploads.items()))
         log.info("uploaded %s as %s (%s)", path.name, upload_id, state)
         return upload_id
 

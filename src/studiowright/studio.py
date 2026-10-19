@@ -40,6 +40,7 @@ from studiowright.flow.page import (
 from studiowright.flow.replies import is_uuid
 from studiowright.images import stage_for_upload
 from studiowright.music.options import (
+    DEFAULT_UPLOAD_TIMEOUT_S,
     AudioFormat,
     ChatRequest,
     EditRequest,
@@ -48,6 +49,7 @@ from studiowright.music.options import (
     VideoTemplate,
     format_time,
     parse_time,
+    validate_upload_timeout,
 )
 from studiowright.music.page import EDIT_KINDS, SONG_KINDS, MusicPage, NotStarted, stem_name
 from studiowright.music.page import LIBRARY_URL as MUSIC_LIBRARY
@@ -891,8 +893,15 @@ class Studio:
             "songs": [c.summary() for c in songs[:limit]],
         }
 
-    async def music_upload(self, file: str | Path, *, confirm_rights: bool) -> dict[str, Any]:
-        """Upload your own audio; it becomes a private song you can remix, extend or split."""
+    async def music_upload(
+        self,
+        file: str | Path,
+        *,
+        confirm_rights: bool,
+        timeout_s: float = DEFAULT_UPLOAD_TIMEOUT_S,
+    ) -> dict[str, Any]:
+        """Upload your own audio; timeout_s is the upload-check wait in seconds."""
+        validate_upload_timeout(timeout_s)
         path = Path(file).expanduser()
         if not path.is_file():
             raise FileNotFoundError(f"audio file not found: {path}")
@@ -905,13 +914,16 @@ class Studio:
         async def work(job_id: str) -> dict[str, Any]:
             music = await MusicPage.open(self.session)
             await self.music_governor.wait_turn()
-            song = await music.upload_audio(path, confirm_rights=True)
+            song = await music.upload_audio(path, confirm_rights=True, timeout_s=timeout_s)
             return {"song": song, "url": f"{MUSIC_ROOT}/song/{song}"}
 
-        return await self._music_job("music-upload", {"file": str(path)}, work)
+        return await self._music_job(
+            "music-upload", {"file": str(path), "timeout_s": timeout_s}, work
+        )
 
     async def music_chat(self, request: ChatRequest) -> dict[str, Any]:
         """Talk to the Producer agent; saves any songs it makes during the turn."""
+        validate_upload_timeout(request.upload_timeout_s)
 
         async def work(job_id: str) -> dict[str, Any]:
             url = f"{MUSIC_ROOT}/session/{request.session}" if request.session else MUSIC_SESSION
@@ -919,7 +931,9 @@ class Studio:
             uploaded = None
             if request.audio:
                 uploaded = await music.upload_audio(
-                    request.audio, confirm_rights=request.confirm_rights
+                    request.audio,
+                    confirm_rights=request.confirm_rights,
+                    timeout_s=request.upload_timeout_s,
                 )
             for image in request.images:
                 await music.attach_image(image, confirm_rights=request.confirm_rights)

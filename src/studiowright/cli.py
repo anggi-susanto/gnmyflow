@@ -30,6 +30,7 @@ from studiowright.flow.options import (
 )
 from studiowright.flow.page import FlowError
 from studiowright.music.options import (
+    DEFAULT_UPLOAD_TIMEOUT_S,
     AudioFormat,
     ChatRequest,
     EditRequest,
@@ -855,6 +856,13 @@ def music_credits(obj: dict[str, str]) -> None:
     help="Confirm you have the rights to attached files (Flow Music asks for this).",
 )
 @click.option("--timeout", default=900, show_default=True, help="Seconds to wait for the turn.")
+@click.option(
+    "--upload-timeout",
+    type=click.IntRange(min=1),
+    default=DEFAULT_UPLOAD_TIMEOUT_S,
+    show_default=True,
+    help="Seconds to wait for attached audio to pass upload checks (before the turn).",
+)
 @_song_options
 @click.pass_obj
 def music_chat(
@@ -865,6 +873,7 @@ def music_chat(
     images: tuple[Path, ...],
     confirm_rights: bool,
     timeout: int,
+    upload_timeout: int,
     audio_format: str,
     out: Path | None,
     as_json: bool,
@@ -883,6 +892,7 @@ def music_chat(
             audio_format=audio_format,
             out_dir=out,
             timeout_s=timeout,
+            upload_timeout_s=upload_timeout,
         )
     )
     _emit_music(_run(lambda studio: studio.music_chat(request), obj["profile"]), as_json)
@@ -896,13 +906,24 @@ def music_chat(
     required=True,
     help="Confirm you have the rights to the file (Flow Music asks for this).",
 )
+@click.option(
+    "--timeout",
+    type=click.IntRange(min=1),
+    default=DEFAULT_UPLOAD_TIMEOUT_S,
+    show_default=True,
+    help="Seconds to wait for audio to pass upload checks.",
+)
 @click.option("--json", "as_json", is_flag=True, help="Print JSON.")
 @click.pass_obj
-def music_upload(obj: dict[str, str], file: Path, confirm_rights: bool, as_json: bool) -> None:
+def music_upload(
+    obj: dict[str, str], file: Path, confirm_rights: bool, timeout: int, as_json: bool
+) -> None:
     """Upload your own audio as a private song you can extend, cover, replace or split."""
     _emit_music(
         _run(
-            lambda studio: studio.music_upload(file, confirm_rights=confirm_rights),
+            lambda studio: studio.music_upload(
+                file, confirm_rights=confirm_rights, timeout_s=timeout
+            ),
             obj["profile"],
         ),
         as_json,
