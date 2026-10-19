@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from playwright.async_api import Page, Request, Response
+from playwright.async_api import TimeoutError as PlaywrightTimeoutError
 
 from studiowright.browser import ChromeSession, capture_download, ensure_rendering
 from studiowright.flow.page import FlowError
@@ -343,7 +344,17 @@ class MusicPage:
         await self.page.locator(SONG_MENU).first.click()
         for index, name in enumerate(path):
             item = self.page.get_by_role("menuitem", name=name, exact=True)
-            await item.wait_for(state="visible", timeout=8_000)
+            try:
+                await item.wait_for(state="visible", timeout=8_000)
+            except PlaywrightTimeoutError as exc:
+                visible = await self.page.get_by_role("menuitem").all_inner_texts()
+                available = ", ".join(text.strip() for text in visible if text.strip()) or "none"
+                raise FlowError(
+                    f"Flow Music action {' > '.join(path[:index + 1])!r} is not available "
+                    f"in this song's open menu. Available entries: {available}. "
+                    "The upload may have succeeded even when this editing action is unavailable. "
+                    "Check the song in Flow Music; no automatic fallback or resubmission was made."
+                ) from exc
             await item.focus()
             await self.page.keyboard.press("ArrowRight" if index < len(path) - 1 else "Enter")
             await self.page.wait_for_timeout(250)
