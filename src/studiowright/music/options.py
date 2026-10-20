@@ -171,6 +171,19 @@ class MusicRequest:
     out_dir: Path | None = None
     cover: Cover | None = None
     timeout_s: int | None = None
+    single_submit: bool = False
+
+    def __post_init__(self) -> None:
+        if self.single_submit and self.cover and self.cover.prompt:
+            raise OptionError("single-submit does not allow a cover prompt (extra paid generation)")
+
+    @property
+    def press_again(self) -> bool:
+        return not self.single_submit
+
+    @property
+    def heuristic_recovery(self) -> bool:
+        return not self.single_submit
 
     @property
     def instrumental(self) -> bool:
@@ -192,6 +205,7 @@ class MusicRequest:
         cover_image: str | Path | None = None,
         cover_prompt: str | None = None,
         timeout_s: int | None = None,
+        single_submit: bool = False,
     ) -> MusicRequest:
         if not sound or not sound.strip():
             raise OptionError("describe the sound (style, instruments, mood)")
@@ -210,6 +224,7 @@ class MusicRequest:
             out_dir,
             Cover.build(cover_image, cover_prompt),
             timeout_s=timeout_s,
+            single_submit=single_submit,
         )
 
 

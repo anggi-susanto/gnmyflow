@@ -590,3 +590,24 @@ uv run ruff check src tests spikes
 ## License
 
 [MIT](LICENSE) © 2026 Umut Koçak
+
+### Single-submit create contract (version 1)
+
+`sw capabilities --json` is a local, read-only probe: it does not open Chrome, sign in,
+access an account, or generate anything. Its `production_create_contract: 1` describes
+**opt-in** `sw music create "SOUND" --single-submit` behavior (not legacy defaults):
+
+- At most one Generate trigger per invocation, including when no start is observed.
+- No heuristic library recovery by title or creation time after an ambiguous failure.
+  The original error is propagated; callers must not automatically retry paid creation.
+- `--cover-prompt` is rejected because it can generate additional paid cover art.
+  A local `--cover` image is allowed. Refilling a failed compose panel before Generate
+  is still allowed.
+- This is not an exactly-once server guarantee, cross-invocation idempotency, a credit
+  reservation, or an assertion that an ambiguous submission spent no credits.
+
+The JSON fields are `production_create_contract` (integer), `single_submit` (boolean),
+`heuristic_recovery` (boolean), `create_flag` (string), `models` and `formats` (arrays of
+accepted strings), and `min_length` / `max_length` (inclusive seconds). Models, formats,
+and length bounds come from request options. Existing create/edit/chat/batch/MCP callers
+retain legacy behavior unless a `MusicRequest(single_submit=True)` is explicitly used.

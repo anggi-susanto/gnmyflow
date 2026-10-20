@@ -31,6 +31,8 @@ from studiowright.flow.options import (
 from studiowright.flow.page import FlowError
 from studiowright.music.options import (
     DEFAULT_UPLOAD_TIMEOUT_S,
+    MAX_LENGTH_S,
+    MIN_LENGTH_S,
     AudioFormat,
     ChatRequest,
     EditRequest,
@@ -94,6 +96,28 @@ def main(ctx: click.Context, profile: str, verbose: bool) -> None:
             level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S"
         )
     ctx.obj = {"profile": profile}
+
+
+@main.command("capabilities")
+@click.option("--json", "as_json", is_flag=True, help="Emit the versioned create contract as JSON.")
+def capabilities(as_json: bool) -> None:
+    """Read local create capabilities; no browser, account or network access."""
+    safe = MusicRequest.build("capability probe", single_submit=True)
+    contract = {
+        "production_create_contract": 1,
+        "single_submit": safe.single_submit and not safe.press_again,
+        "heuristic_recovery": safe.heuristic_recovery,
+        "create_flag": "--single-submit",
+        "models": [m.value for m in MusicModel],
+        "formats": [f.value for f in AudioFormat],
+        "min_length": MIN_LENGTH_S,
+        "max_length": MAX_LENGTH_S,
+    }
+    if as_json:
+        click.echo(json.dumps(contract, sort_keys=True))
+    else:
+        for key, value in contract.items():
+            click.echo(f"{key}: {value}")
 
 
 # --- auth ---------------------------------------------------------------------------------
@@ -593,6 +617,10 @@ def music() -> None:
 
 
 @music.command("create")
+@click.option(
+    "--single-submit", is_flag=True,
+    help="Submit at most once; no heuristic library recovery or paid cover prompt.",
+)
 @click.argument("sound")
 @_lyrics_options
 @click.option("--bpm", type=int, help="Tempo; default: Flow decides.")
@@ -625,6 +653,7 @@ def music_create(
     audio_format: str,
     out: Path | None,
     as_json: bool,
+    single_submit: bool = False,
 ) -> None:
     """Make a song (with lyrics) or an instrumental (without) from a SOUND description."""
     request = _option_error(
@@ -641,6 +670,7 @@ def music_create(
             cover_image=cover,
             cover_prompt=cover_prompt,
             timeout_s=timeout,
+            single_submit=single_submit,
         )
     )
     _emit_music(_run(lambda studio: studio.music(request), obj["profile"]), as_json)

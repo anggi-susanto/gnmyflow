@@ -704,12 +704,16 @@ class Studio:
             try:
                 clips = (
                     await music.generate(
-                        kinds=SONG_KINDS, timeout_s=request.timeout_s or 600
+                        kinds=SONG_KINDS, timeout_s=request.timeout_s or 600,
+                        press_again=request.press_again
                     )
                 ).ready_clips()
             except NotStarted:
                 raise
             except FlowError as exc:
+                if not request.heuristic_recovery:
+                    # Acceptance is ambiguous. Never guess by title/time or resubmit.
+                    raise
                 # The song may have finished after the wait; it is in the library then.
                 clips = [
                     c
@@ -737,6 +741,7 @@ class Studio:
             "model": request.model.value,
             "title": request.title,
             "format": request.audio_format.value,
+            "single_submit": request.single_submit,
         }
         return await self._music_job("music", params, work)
 

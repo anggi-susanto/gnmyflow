@@ -98,7 +98,7 @@ def _input_after(label: str) -> str:
 
 
 class NotStarted(FlowError):
-    """The action sent nothing to Flow Music, so nothing was spent; it is safe to retry."""
+    """No submission was observed; service acceptance may still be ambiguous."""
 
 
 class Watch:
@@ -244,7 +244,9 @@ class Watch:
                 settled_at = None
             idle = not (self.submitted or self.jobs or self.ops or self.clips)
             if start_s is not None and idle and time.monotonic() - begun > start_s:
-                raise NotStarted("Flow Music did not start the job; nothing was spent")
+                raise NotStarted(
+                    "No Flow Music job start was observed; submission status is unknown"
+                )
             turn_done = self.jobs <= self.finished_jobs and (
                 not need_turn or bool(self.finished_jobs)
             )
@@ -543,8 +545,8 @@ class MusicPage:
         settle_s: float = 4.0,
         press_again: bool = False,
     ) -> Watch:
-        """Run ``trigger`` and wait for its results. A trigger that sends nothing within
-        ``START_GRACE_S`` spent nothing; with ``press_again`` it is run once more."""
+        """Run ``trigger`` and wait for results. With ``press_again``, retry once
+        when no start was observed within ``START_GRACE_S`` (legacy behavior)."""
         for attempt in (1, 2):
             with Watch(self.page, known, kinds) as watch:
                 await trigger()
@@ -569,8 +571,13 @@ class MusicPage:
         known: set[str] | None = None,
         kinds: set[str] | None = None,
         timeout_s: float = 600,
+        press_again: bool = True,
     ) -> Watch:
-        """Press the compose panel's Generate and wait for the new songs."""
+        """Press Generate; optionally retry once if no submission was observed.
+
+        Set ``press_again=False`` for single-submit create: missing observations are
+        ambiguous, not proof that the service did not accept a paid submission.
+        """
 
         async def press() -> None:
             sys.stderr.write("__SW_STAGE__Rendering audio on Flow server\n")
@@ -579,7 +586,7 @@ class MusicPage:
             log.info("music generation submitted")
 
         return await self._run(
-            press, known=known, kinds=kinds, timeout_s=timeout_s, press_again=True
+            press, known=known, kinds=kinds, timeout_s=timeout_s, press_again=press_again
         )
 
     async def variation(self, clip_id: str) -> Watch:
