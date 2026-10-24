@@ -137,18 +137,20 @@ What makes it different:
 
 ## Install
 
-This fork is not published on PyPI yet. Install from the repository only after
-the rename changes have been pushed. The plugin pin `v0.3.1` targets the first fork
-release and will only work after that tag is published. The existing `v0.3.0` tag
-predates the rename and must not be moved or reused for the fork release.
+[GnmyFlow 0.3.1 is available on PyPI](https://pypi.org/project/gnmyflow/0.3.1/).
+The existing `v0.3.0` tag predates the fork rename; use `v0.3.1` or later for GnmyFlow.
 
 Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), Google Chrome, and a Google
 account with a Flow plan (images and video) and/or a Flow Music plan (music).
 
 ```bash
-uv tool install git+https://github.com/anggi-susanto/gnmyflow
-sw --version
+uv tool install gnmyflow==0.3.1
+gnmyflow --version
 ```
+
+Alternatively, use `pipx install gnmyflow==0.3.1`. For a pinned source installation,
+use `uv tool install git+https://github.com/anggi-susanto/gnmyflow@v0.3.1`.
+Installing the package does not install Google Chrome, sign you in, or configure MCP.
 
 The primary command is `gnmyflow`. Compatibility aliases `sw` and `studiowright`
 run the same CLI. Do not install both forks into the same environment: they share
@@ -173,7 +175,9 @@ uv tool install --python 3.13 -e .
   Each plugin version runs the GnmyFlow release of the same version. To update
   automatically, turn it on once: `/plugin` → Marketplaces → gnmyflow → Enable
   auto-update.
-- **Command line**: `uv tool install --force git+https://github.com/anggi-susanto/gnmyflow@vX.Y.Z`
+- **Command line (PyPI)**: `uv tool upgrade gnmyflow` or `pipx upgrade gnmyflow`.
+  Pin a specific version with `uv tool install --force gnmyflow==X.Y.Z`.
+- **Command line (source)**: `uv tool install --force git+https://github.com/anggi-susanto/gnmyflow@vX.Y.Z`
   with the release you want (see [Releases](https://github.com/anggi-susanto/gnmyflow/releases)).
 
 ## Quick start
@@ -766,8 +770,10 @@ References: [Twine](https://twine.readthedocs.io/en/stable/),
   `studio.py` adds locking, pacing, job records and downloads on top.
 - `spikes/` holds the small scripts used to map each page. Most only open menus and read
   replies, at no cost; their docstrings say when one spends credits.
-- Tested on Windows 11. The code also finds Chrome on macOS and Linux, but those platforms
-  have not been tested yet.
+- Upstream reported browser testing on Windows 11. Fork 0.3.1 passed 150 local tests,
+  lint, archive audits, and clean wheel/sdist/index installation smoke tests on macOS
+  with Python 3.12. No live provider/browser validation was performed for this release;
+  Linux/Windows and Python 3.13 fork validation remain pending.
 
 ## Disclaimer
 
