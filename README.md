@@ -587,73 +587,180 @@ uv run pytest                        # unit tests, no browser needed
 uv run ruff check src tests spikes
 ```
 
-### Release checks and publishing
+### Manual release procedure (no CI)
 
-CI runs offline unit tests on Python 3.12/3.13 across Linux, macOS and Windows.
-These checks do not establish that live browser automation works on each platform.
-The build job audits both archives and installs each into a fresh environment before
-running `scripts/smoke_install.py`. That script blocks Chrome startup and socket
-connections during the CLI checks. Installation still needs access to dependency indexes.
+GitHub Actions is currently disabled because the account has a billing lock, not because
+GitHub Free universally excludes Actions. The previous run stopped before any test step.
+Local validation passed on macOS with Python 3.12; the Linux/Windows and Python 3.13
+matrix has **not** been verified. Live provider/browser behavior is a separate check.
 
-Local release checks:
+Both registered workflows have been disabled on GitHub. Templates are retained under
+`.github/disabled-workflows/*.yml.disabled`, outside the active workflow directory.
+Do not restore them or enable publication without a separate review. Trusted Publishing
+OIDC is deferred; manual uploads use separate TestPyPI/PyPI API tokens.
+
+The commands below assume macOS/Linux and a shell opened at the repository root. On
+Windows, use equivalent PowerShell commands and venv executables under `Scripts/`.
+Do not launch Chrome, run diagnostic spikes, sign in, or generate content for these checks.
+Installing dependencies accesses package indexes; the smoke test itself blocks socket
+connections and Chrome startup during the CLI checks. Package installation does not
+install Google Chrome or configure MCP/the Claude Code plugin. No Playwright browser
+binary installation is needed: this application attaches to separately installed Chrome.
+
+#### 1. Review and freeze the source
+
+Obtain explicit approval for the release version and source commit. Commit/push only
+with permission; build from a clean reviewed checkout, not an uncommitted working tree.
+Check that package, runtime, plugin and plugin source pin all agree on `0.3.1`:
 
 ```bash
+git status --short
+git rev-parse HEAD
 uv sync --locked
 uv run --locked pytest
 uv run --locked ruff check src tests spikes scripts
-uv build
-uv run --no-project python scripts/audit_dist.py
-uvx --from twine twine check dist/*
+git diff --check
 ```
 
-Use an empty `dist/` before building; the audit expects exactly one wheel and one sdist.
-Do not install Playwright browser binaries or start Chrome for these checks: runtime
-automation attaches to separately installed Google Chrome, not a bundled browser.
-Installing the package does not configure MCP or install the Claude Code plugin.
+Stop on any failure or unexpected working-tree change. Record the source commit, Python,
+OS and uv versions outside the package. Do not claim untested platforms are supported.
 
-Before enabling publication, create GitHub environments `testpypi` and `pypi` with
-required reviewers, prevent self-review where available, and restrict deployment refs
-to reviewed version tags. Configure a separate Trusted Publisher (or pending publisher
-for a new project) on each index with these exact GitHub settings:
+#### 2. Build once, inspect and record hashes
 
-- Owner: `anggi-susanto`; repository: `gnmyflow`.
-- Workflow filename: `publish.yml`.
-- Environment: `testpypi` for TestPyPI, `pypi` for PyPI.
-- Project/distribution name: `gnmyflow`.
-
-The workflow uses short-lived OIDC credentials; no permanent API token is needed.
-GitHub environment protection and index-side publisher configuration are manual steps,
-not created by the workflow. See [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/).
-
-After explicit release approval, create a fresh version tag matching the metadata.
-Run **Publish (manual)** from that tag, first with `testpypi`. Branch dispatches and
-mismatched tags are rejected. The workflow reruns CI, builds and validates the artifacts,
-then waits for the configured environment approval before upload. No upload runs on
-ordinary pushes or pull requests. Only the publish job has `id-token: write` permission.
-
-TestPyPI is separate from PyPI and may not contain the dependencies. In a fresh venv,
-install the exact TestPyPI package with `--no-deps`, then install its dependencies from
-PyPI separately; avoid treating a mixed-index install as proof of package provenance:
+Use a new temporary workspace so old artifacts are not mixed into the release. Keep this
+shell open: later commands reuse `RELEASE_WORK` and `RELEASE_DIST`.
 
 ```bash
-uv venv /tmp/gnmyflow-testpypi --python 3.12
-uv pip install --python /tmp/gnmyflow-testpypi/bin/python --no-deps \
+RELEASE_WORK=$(mktemp -d "${TMPDIR:-/tmp}/gnmyflow-release.XXXXXX")
+RELEASE_DIST="$RELEASE_WORK/dist"
+uv build --out-dir "$RELEASE_DIST"
+uv run --no-project python -c \
+  'import runpy, sys; from pathlib import Path; runpy.run_path("scripts/audit_dist.py")["audit"](Path(sys.argv[1]))' \
+  "$RELEASE_DIST"
+uvx --from twine twine check --strict "$RELEASE_DIST"/*
+(cd "$RELEASE_DIST" && shasum -a 256 gnmyflow-0.3.1* > "$RELEASE_WORK/SHA256SUMS")
+cat "$RELEASE_WORK/SHA256SUMS"
+```
+
+The archive allowlist excludes profiles, session captures, incident screenshots, databases,
+`.env`, caches, diagnostic spikes and media showcase files. Inspect the source as well:
+an allowed Python file can still contain hard-coded secrets. Keep MIT copyright and
+upstream author attribution intact. Freeze these exact archives; **do not rebuild between
+TestPyPI and PyPI**. Any source/artifact change invalidates approval and requires revalidation.
+
+#### 3. Clean installation of both local archives
+
+```bash
+uv venv "$RELEASE_WORK/wheel" --python 3.12
+uv pip install --python "$RELEASE_WORK/wheel/bin/python" "$RELEASE_DIST"/*.whl
+"$RELEASE_WORK/wheel/bin/python" -I scripts/smoke_install.py
+uv venv "$RELEASE_WORK/sdist" --python 3.12
+uv pip install --python "$RELEASE_WORK/sdist/bin/python" "$RELEASE_DIST"/*.tar.gz
+"$RELEASE_WORK/sdist/bin/python" -I scripts/smoke_install.py
+```
+
+Both must pass metadata/import checks and offline help/version/capabilities for
+`gnmyflow`, `sw` and `studiowright`. Dependency resolution here is fresh, rather than the
+development lockfile. Do not install alongside upstream in the same environment: the
+import namespace and legacy commands overlap. Additional tests on Linux/Windows and
+Python 3.13 require their own machines/environments; these commands do not prove them.
+
+#### 4. TestPyPI upload — explicit approval required
+
+Create/manage the TestPyPI account and enable required account security (including 2FA)
+through the official website. PyPI is a separate account/index. Create a TestPyPI API
+token there; for the first upload a narrowly scoped project token may not yet be possible.
+If an account-wide token is needed, revoke it after initial project creation and use a
+project-scoped token thereafter. Never publish a placeholder to reserve the name.
+
+Enter the token only into Twine's hidden terminal prompt (username `__token__` if asked).
+Never put tokens in chat, commands/arguments, shell history, repository files or a plaintext
+`.pypirc`. Avoid terminal/session recording while entering secrets. The following command
+disables keyring lookup for that invocation without changing the user's global settings:
+
+```bash
+(cd "$RELEASE_DIST" && shasum -a 256 -c "$RELEASE_WORK/SHA256SUMS")
+PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring \
+  uvx --from twine twine upload \
+  --repository-url https://test.pypi.org/legacy/ "$RELEASE_DIST"/*
+```
+
+Use an interactive terminal; do not use `--non-interactive` without configured credentials.
+If credential environment overrides are already set, clear them in that shell before
+upload so Twine prompts instead; never print their values. Do not use `--skip-existing`
+to hide errors. For a partial upload, inspect the index, compare existing file hashes,
+and upload only a missing file after review. Existing PyPI filenames cannot be overwritten.
+
+#### 5. Verify the TestPyPI package, not a mixed-index substitute
+
+TestPyPI may lack dependencies. Install the exact package only from TestPyPI with
+`--no-deps`, then install dependencies separately from PyPI. Do not use a mixed
+`--extra-index-url` install as evidence that the target package came from TestPyPI.
+
+```bash
+uv venv "$RELEASE_WORK/testpypi" --python 3.12
+uv pip install --python "$RELEASE_WORK/testpypi/bin/python" --no-deps \
   --index-url https://test.pypi.org/simple/ 'gnmyflow==0.3.1'
-uv pip install --python /tmp/gnmyflow-testpypi/bin/python \
+uv pip install --python "$RELEASE_WORK/testpypi/bin/python" \
   --index-url https://pypi.org/simple/ \
   'click>=8.5.0' 'filelock>=4.1.0' 'mcp[cli]>=2.3.0' 'pillow>=11.0' \
   'platformdirs>=4.12.4' 'playwright>=1.63.0'
-/tmp/gnmyflow-testpypi/bin/python -I scripts/smoke_install.py
+"$RELEASE_WORK/testpypi/bin/python" -I scripts/smoke_install.py
 ```
 
-Review the exact artifact hashes before approving the PyPI run. Each manual run rebuilds
-the artifacts; do not assume a TestPyPI upload and a later PyPI run have identical bytes.
-After PyPI installation is verified, create the GitHub release with upstream attribution
-and the compatibility/security limitations. Do not overwrite existing tags or PyPI files.
-For a bad release, stop further publishing, yank the affected PyPI version when appropriate,
-and publish a corrected version. Users can reinstall a known-good exact version; keep old
-profile data intact. Normal CLI updates use `uv tool upgrade gnmyflow` or `pipx upgrade gnmyflow`
-after a PyPI installation; VCS installations use an explicitly selected release tag.
+Review `https://test.pypi.org/pypi/gnmyflow/0.3.1/json`: compare the uploaded filenames
+and `digests.sha256` with the frozen manifest. Read metadata/README/license on the project
+page. TestPyPI success does not reserve the PyPI name or validate provider behavior.
+
+#### 6. PyPI upload — separate explicit approval required
+
+Confirm the name is still usable, source commit is unchanged, and TestPyPI verification
+passed. Public HTTP errors are not evidence of name availability; a 404 is not a guarantee
+that PyPI permits registration. Use a real release, not a placeholder. Configure 2FA and
+an API token on **PyPI**, separate from TestPyPI; use project scope when available and
+revoke any bootstrap account-wide token afterward.
+
+```bash
+git status --short
+git rev-parse HEAD
+(cd "$RELEASE_DIST" && shasum -a 256 -c "$RELEASE_WORK/SHA256SUMS")
+PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring \
+  uvx --from twine twine upload \
+  --repository-url https://upload.pypi.org/legacy/ "$RELEASE_DIST"/*
+```
+
+This uploads the **same bytes** already tested. Do not rebuild. Verify filenames and
+SHA-256 values at `https://pypi.org/pypi/gnmyflow/0.3.1/json`, then install from PyPI alone:
+
+```bash
+uv venv "$RELEASE_WORK/pypi" --python 3.12
+uv pip install --python "$RELEASE_WORK/pypi/bin/python" \
+  --index-url https://pypi.org/simple/ 'gnmyflow==0.3.1'
+"$RELEASE_WORK/pypi/bin/python" -I scripts/smoke_install.py
+```
+
+#### 7. Tag, GitHub release and updates
+
+After verification and separate approval, create/push `v0.3.1` at the exact reviewed source
+commit. Never move the existing `v0.3.0` tag. Create the GitHub release with the source
+commit, artifact hashes, upstream attribution, compatibility details and platform/security
+limitations. The plugin's pinned source becomes usable only once the tag exists. Update
+the installation notice after publication; do not announce success prematurely.
+
+Keep the archives and hash manifest as release evidence; remove only the disposable
+venvs when no longer needed. Users may install with `uv tool install gnmyflow` or
+`pipx install gnmyflow`, then update with `uv tool upgrade gnmyflow` or
+`pipx upgrade gnmyflow`. VCS installations use an explicitly selected release tag.
+
+For a bad release, stop publication, yank the affected version when appropriate, and
+publish a new fixed version. PyPI releases cannot be overwritten; do not delete/reuse
+filenames or move tags. A yanked version can still be installed with an explicit pin, so
+publish a clear advisory. Reinstall a known-good version to roll back; preserve existing
+profiles/databases. Revoke compromised tokens immediately and rotate them outside chat.
+
+References: [Twine](https://twine.readthedocs.io/en/stable/),
+[TestPyPI](https://packaging.python.org/en/latest/guides/using-testpypi/),
+[Trusted Publishing (future option)](https://docs.pypi.org/trusted-publishers/).
 
 - `src/studiowright/flow/` drives Flow, `src/studiowright/music/` drives Flow Music, and
   `studio.py` adds locking, pacing, job records and downloads on top.
