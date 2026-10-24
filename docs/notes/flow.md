@@ -1,12 +1,12 @@
-# Google Flow: how StudioWright drives it
+# Google Flow: how GnmyFlow drives it
 
-Notes from StudioWright's own probes on a test profile (October 2026). They describe what
+Notes inherited from StudioWright by Umut Koçak, with fork updates; based on probes on a test profile (October 2026). They describe what
 the code relies on, so a Flow update can be traced quickly. Flow changes often; re-measure
 before trusting a detail here.
 
 ## Browser
 
-- StudioWright starts the installed Chrome on a dedicated user-data directory with
+- GnmyFlow starts the installed Chrome on a dedicated user-data directory with
   `--remote-debugging-port` on loopback (port `9300 + crc32(profile) % 90`) and attaches
   with Playwright's `connect_over_cdp`. Chrome is not launched by Playwright, so
   `navigator.webdriver` stays false and no automation switches are added.
@@ -27,14 +27,14 @@ Flow protects generation and upload calls with reCAPTCHA Enterprise. A token min
 the page was refused on the first try (`PUBLIC_ERROR_UNUSUAL_ACTIVITY`), and rewriting a
 request the page signed would be circumvention. So:
 
-- every token-bearing call is made by Flow's own UI, after StudioWright types and clicks;
-- StudioWright never mints, replays, rewrites or forges such requests, never uses
+- every token-bearing call is made by Flow's own UI, after GnmyFlow types and clicks;
+- GnmyFlow never mints, replays, rewrites or forges such requests, never uses
   `page.route`, and never exports cookies;
 - it only reads Flow's replies (`page.on("response")`) to learn ids and download URLs;
 - token-free calls the page itself makes (project creation, `jHPbke`) may be sent from
   the page with its own session values.
 
-## Wire facts StudioWright reads
+## Wire facts GnmyFlow reads
 
 - **batchexecute.** `POST /_/…/data/batchexecute` with
   `f.req=[[["<rpcid>", "<inner JSON as a string>", null, "generic"]]]&at=<csrf>`.
@@ -68,7 +68,7 @@ request the page signed would be circumvention. So:
   characters, scenes, uploads) and shows two large tiles per row. The grid is a virtual
   scroller (`.cdk-virtual-scrollable`): only ~16 tiles exist at a time, and a project of
   270 media is ~52,000 px tall. Tiles carry `img[data-media-id]` and their title as text.
-  StudioWright scrolls that container itself (from where the medium should be, by its age
+  GnmyFlow scrolls that container itself (from where the medium should be, by its age
   among the project's media) rather than with the mouse wheel.
 - The prompt box's own add button opens a picker with tabs and a search field. Search
   matches display names; uploads are named after the staged file (`sw-<sha256[:10]>.jpg`),
@@ -98,7 +98,7 @@ request the page signed would be circumvention. So:
 Upscales are paced on their own (60 s + jitter) and pause for an hour after a refusal;
 the refusal is read from the `SPrCad` reply, because the page itself shows nothing.
 Flow's credit balance is not shown as a number anywhere in the UI (only a "credits
-running low" banner); StudioWright records it from video submit replies.
+running low" banner); GnmyFlow records it from video submit replies.
 
 | Job | Flow credits |
 | --- | --- |

@@ -1,12 +1,13 @@
 [project]
-name = "studiowright"
-version = "0.3.0"
-description = "StudioWright: a fast CLI and MCP server for Google Flow and Google Flow Music. Unofficial; not affiliated with Google."
+name = "gnmyflow"
+version = "0.3.1"
+description = "GnmyFlow: a fast CLI and MCP server for Google Flow and Google Flow Music. Fork of StudioWright; unofficial and not affiliated with Google."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.12"
 authors = [{ name = "Umut Koçak" }]
+maintainers = [{ name = "anggi-susanto" }]
 dependencies = [
     "click>=8.5.0",
     "filelock>=4.1.0",
@@ -17,8 +18,14 @@ dependencies = [
 ]
 
 [project.scripts]
+gnmyflow = "studiowright.cli:main"
 studiowright = "studiowright.cli:main"
 sw = "studiowright.cli:main"
+
+[project.urls]
+Repository = "https://github.com/anggi-susanto/gnmyflow"
+Issues = "https://github.com/anggi-susanto/gnmyflow/issues"
+Upstream = "https://github.com/umutkocak/studiowright"
 
 [build-system]
 requires = ["hatchling"]
@@ -26,6 +33,21 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/studiowright"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "/src/studiowright/**/*.py",
+    "/tests/**/*.py",
+    "/scripts/audit_dist.py",
+    "/scripts/smoke_install.py",
+    "/plugins/gnmyflow/.claude-plugin/plugin.json",
+    "/plugins/gnmyflow/.mcp.json",
+    "/plugins/gnmyflow/skills/gnmyflow/SKILL.md",
+    "/.claude-plugin/marketplace.json",
+    "/pyproject.toml",
+    "/README.md",
+    "/LICENSE",
+]
 
 [tool.ruff]
 line-length = 100

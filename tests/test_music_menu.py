@@ -12,7 +12,9 @@ def page_with_menu(missing=False):
     item = Mock()
     item.wait_for = AsyncMock(side_effect=PlaywrightTimeoutError('timeout') if missing else None)
     item.focus = AsyncMock()
-    entries = Mock(all_inner_texts=AsyncMock(return_value=['Details', 'Download', 'Add to...', 'Split stems']))
+    entries = Mock(
+        all_inner_texts=AsyncMock(return_value=["Details", "Download", "Add to...", "Split stems"])
+    )
     trigger = Mock()
     trigger.first = SimpleNamespace(click=AsyncMock())
     page = Mock()
@@ -36,6 +38,6 @@ async def test_missing_remix_explains_available_actions_without_submitting():
 
 
 async def test_existing_menu_uses_keyboard_submenu_navigation():
-    music, page, item = page_with_menu()
+    music, page, _item = page_with_menu()
     await music.song_menu('Remix', 'Cover')
     assert [call.args[0] for call in page.keyboard.press.call_args_list] == ['ArrowRight', 'Enter']

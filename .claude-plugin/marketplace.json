@@ -1,13 +1,13 @@
 {
-  "name": "studiowright",
+  "name": "gnmyflow",
   "owner": {
-    "name": "Umut Koçak"
+    "name": "anggi-susanto"
   },
-  "description": "StudioWright: Google Flow and Google Flow Music from Claude Code, through your own signed-in Chrome.",
+  "description": "GnmyFlow, a StudioWright fork: Google Flow and Google Flow Music from Claude Code through your own signed-in Chrome.",
   "plugins": [
     {
-      "name": "studiowright",
-      "source": "./plugins/studiowright",
+      "name": "gnmyflow",
+      "source": "./plugins/gnmyflow",
       "description": "MCP tools for Google Flow images and videos and Google Flow Music songs, plus a skill on how to use them."
     }
   ]

@@ -1,6 +1,6 @@
 <div align="center">
 
-# StudioWright
+# GnmyFlow
 
 **Google Flow and Google Flow Music, from your terminal and your AI agent.**
 
@@ -16,7 +16,7 @@ No API keys. No cookie exports. No captcha solvers. No browser extension.
 </div>
 
 > [!IMPORTANT]
-> StudioWright is an independent, unofficial project. It is not affiliated with, endorsed
+> GnmyFlow is an unofficial fork of [StudioWright](https://github.com/umutkocak/studiowright), originally authored by Umut Koçak. It is not affiliated with, endorsed
 > or sponsored by Google. It drives Flow's and Flow Music's web pages in **your** browser
 > and spends **your** credits. Read the [disclaimer](#disclaimer) before you use it.
 
@@ -29,7 +29,7 @@ sw music "moody indie folk, warm male vocal" --lyrics-file chorus.txt --length 1
 ## Contents
 
 - [Showcase](#showcase)
-- [Why StudioWright](#why-studiowright)
+- [Why GnmyFlow](#why-gnmyflow)
 - [Features](#features)
 - [Install](#install)
 - [Quick start](#quick-start)
@@ -45,7 +45,7 @@ sw music "moody indie folk, warm male vocal" --lyrics-file chorus.txt --length 1
 
 ## Showcase
 
-Everything here was made with StudioWright, from one small batch file and two chat
+The showcase below was inherited from StudioWright and made with StudioWright, from one small batch file and two chat
 messages.
 
 ```json
@@ -72,13 +72,13 @@ sw music chat "Write a four-line chorus about a lighthouse keeper who waits for 
 sw music chat "Moody indie-folk please. Make the song now, about one minute long." --session <id from the first reply>
 ```
 
-## Why StudioWright
+## Why GnmyFlow
 
 Most ways to automate Google's media models need one of these: a paid API key, cookies
 copied out of your browser, a captcha-solving service, an unpacked browser extension, or a
-third-party relay that holds your session. StudioWright needs none of them.
+third-party relay that holds your session. GnmyFlow needs none of them.
 
-| | Paid model APIs | Cookie-based wrappers | Hosted relays | **StudioWright** |
+| | Paid model APIs | Cookie-based wrappers | Hosted relays | **GnmyFlow** |
 | --- | :---: | :---: | :---: | :---: |
 | Uses the credits of your Flow / Flow Music plan | ✗ | ✓ | ✓ | **✓** |
 | No API key or per-call billing | ✗ | ✓ | ✗ | **✓** |
@@ -89,7 +89,7 @@ third-party relay that holds your session. StudioWright needs none of them.
 
 What makes it different:
 
-- **It acts like you.** StudioWright types, clicks and chooses files in Flow's real pages,
+- **It acts like you.** GnmyFlow types, clicks and chooses files in Flow's real pages,
   in a Chrome you signed in to yourself. It only *reads* the replies those pages receive,
   to learn ids and download links. It never forges, replays or alters a request.
 - **One package, three front doors.** The same engine is a CLI (`sw`), an MCP server
@@ -137,22 +137,29 @@ What makes it different:
 
 ## Install
 
+This fork is not published on PyPI yet. Install from the repository only after
+the rename changes have been pushed. The plugin pin `v0.3.1` targets the first fork
+release and will only work after that tag is published. The existing `v0.3.0` tag
+predates the rename and must not be moved or reused for the fork release.
+
 Requirements: Python 3.12+, [uv](https://docs.astral.sh/uv/), Google Chrome, and a Google
 account with a Flow plan (images and video) and/or a Flow Music plan (music).
 
 ```bash
-uv tool install git+https://github.com/umutkocak/studiowright
+uv tool install git+https://github.com/anggi-susanto/gnmyflow
 sw --version
 ```
 
-This puts two identical commands on your PATH: `studiowright` and its short form `sw`.
+The primary command is `gnmyflow`. Compatibility aliases `sw` and `studiowright`
+run the same CLI. Do not install both forks into the same environment: they share
+the `studiowright` Python namespace and legacy commands.
 
 <details>
 <summary>From a local checkout (for development)</summary>
 
 ```bash
-git clone https://github.com/umutkocak/studiowright.git
-cd studiowright
+git clone https://github.com/anggi-susanto/gnmyflow.git
+cd gnmyflow
 uv sync
 uv tool install --python 3.13 -e .
 ```
@@ -161,17 +168,17 @@ uv tool install --python 3.13 -e .
 
 ### Updating
 
-- **Plugin** (MCP server and skill): `claude plugin update studiowright@studiowright`, or in
-  Claude Code `/plugin` → Installed → studiowright → Update now; then `/reload-plugins`.
-  Each plugin version runs the StudioWright release of the same version. To update
-  automatically, turn it on once: `/plugin` → Marketplaces → studiowright → Enable
+- **Plugin** (MCP server and skill): `claude plugin update gnmyflow@gnmyflow`, or in
+  Claude Code `/plugin` → Installed → gnmyflow → Update now; then `/reload-plugins`.
+  Each plugin version runs the GnmyFlow release of the same version. To update
+  automatically, turn it on once: `/plugin` → Marketplaces → gnmyflow → Enable
   auto-update.
-- **Command line**: `uv tool install --force git+https://github.com/umutkocak/studiowright@vX.Y.Z`
-  with the release you want (see [Releases](https://github.com/umutkocak/studiowright/releases)).
+- **Command line**: `uv tool install --force git+https://github.com/anggi-susanto/gnmyflow@vX.Y.Z`
+  with the release you want (see [Releases](https://github.com/anggi-susanto/gnmyflow/releases)).
 
 ## Quick start
 
-**1. Sign in once.** Chrome opens on a profile that belongs to StudioWright only. Sign in
+**1. Sign in once.** Chrome opens on a profile that belongs to GnmyFlow only. Sign in
 to Google, open Flow once, then close the window.
 
 ```bash
@@ -179,7 +186,7 @@ sw auth login
 sw auth login --url https://www.flowmusic.app/    # only if you will make music
 ```
 
-Run `sw stop` first if StudioWright's Chrome is already running.
+Run `sw stop` first if GnmyFlow's Chrome is already running.
 
 **2. Make something.**
 
@@ -197,8 +204,8 @@ minimize it: a minimized Chrome stops rendering and Flow stalls.
 
 ## Use it from AI agents
 
-Every client below runs the same server: `sw mcp` (stdio). If a client cannot find `sw`,
-give it the full path (`where sw` on Windows, `which sw` elsewhere).
+Every client below runs `gnmyflow mcp` over stdio; `sw mcp` remains compatible.
+If a client cannot find `gnmyflow`, give it the full executable path.
 
 Generating takes real time (an image ~20 s, a clip up to a few minutes), so give the
 client a generous tool timeout where it has one.
@@ -209,17 +216,17 @@ The plugin adds the MCP server and a skill that teaches Claude the options, pric
 safe habits.
 
 ```bash
-claude plugin install studiowright --marketplace umutkocak/studiowright
+claude plugin install gnmyflow --marketplace anggi-susanto/gnmyflow
 ```
 
 or inside Claude Code:
 
 ```text
-/plugin marketplace add umutkocak/studiowright
-/plugin install studiowright@studiowright
+/plugin marketplace add anggi-susanto/gnmyflow
+/plugin install gnmyflow@gnmyflow
 ```
 
-The plugin starts its own matching StudioWright release with `uvx`, so it needs only `uv`
+The plugin starts its own matching GnmyFlow release with `uvx`, so it needs only `uv`
 and Chrome; installing `sw` separately is for the command line.
 
 Then just ask:
@@ -232,7 +239,7 @@ Then just ask:
 ### Claude Code (MCP server only)
 
 ```bash
-claude mcp add --scope user studiowright -- sw mcp
+claude mcp add --scope user gnmyflow -- gnmyflow mcp
 ```
 
 For long video jobs, raise the tool timeout, e.g. `MCP_TOOL_TIMEOUT=900000` in your
@@ -247,7 +254,7 @@ Settings → Developer → Edit Config, then add the server to `claude_desktop_c
 ```json
 {
   "mcpServers": {
-    "studiowright": { "command": "sw", "args": ["mcp"] }
+    "gnmyflow": { "command": "gnmyflow", "args": ["mcp"] }
   }
 }
 ```
@@ -263,7 +270,7 @@ Quit Claude Desktop completely and start it again.
 ```json
 {
   "mcpServers": {
-    "studiowright": { "command": "sw", "args": ["mcp"] }
+    "gnmyflow": { "command": "gnmyflow", "args": ["mcp"] }
   }
 }
 ```
@@ -277,7 +284,7 @@ Quit Claude Desktop completely and start it again.
 ```json
 {
   "servers": {
-    "studiowright": { "type": "stdio", "command": "sw", "args": ["mcp"] }
+    "gnmyflow": { "type": "stdio", "command": "gnmyflow", "args": ["mcp"] }
   }
 }
 ```
@@ -289,14 +296,14 @@ For all workspaces, run **MCP: Open User Configuration** and add the same entry.
 <summary><b>Codex CLI</b></summary>
 
 ```bash
-codex mcp add studiowright -- sw mcp
+codex mcp add gnmyflow -- gnmyflow mcp
 ```
 
 or in `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.studiowright]
-command = "sw"
+[mcp_servers.gnmyflow]
+command = "gnmyflow"
 args = ["mcp"]
 tool_timeout_sec = 900
 ```
@@ -306,7 +313,7 @@ tool_timeout_sec = 900
 <summary><b>Gemini CLI</b></summary>
 
 ```bash
-gemini mcp add -s user studiowright sw mcp
+gemini mcp add -s user gnmyflow gnmyflow mcp
 ```
 
 or in `~/.gemini/settings.json`:
@@ -314,7 +321,7 @@ or in `~/.gemini/settings.json`:
 ```json
 {
   "mcpServers": {
-    "studiowright": { "command": "sw", "args": ["mcp"], "timeout": 900000 }
+    "gnmyflow": { "command": "gnmyflow", "args": ["mcp"], "timeout": 900000 }
   }
 }
 ```
@@ -386,7 +393,7 @@ sw music list | sw music credits
 
 `sw music "SOUND"` is short for `sw music create "SOUND"`. Flow Music asks you to confirm
 that you have the rights to files you upload; `--confirm-rights` is that confirmation, and
-StudioWright never gives it on its own.
+GnmyFlow never gives it on its own.
 
 ## Batch files
 
@@ -440,14 +447,14 @@ Built-in guards:
 - One job at a time per profile (and one Flow Music job at a time), queued by a lock.
   Downloads run in a tab of their own beside generations, since they submit nothing.
 - Upscaled downloads (2K/4K, 1080p) are spaced a minute apart. Flow refuses bulk upscaling
-  with "unusual activity"; StudioWright then pauses upscales for an hour (generations go
+  with "unusual activity"; GnmyFlow then pauses upscales for an hour (generations go
   on) and saves new media at their original size meanwhile.
 
 ## How it works
 
 ```mermaid
 flowchart LR
-    A["You, Claude or any MCP client"] -->|"sw … / MCP tools"| B["StudioWright"]
+    A["You, Claude or any MCP client"] -->|"sw … / MCP tools"| B["GnmyFlow"]
     B -->|"CDP on 127.0.0.1"| C["Your Chrome<br/>dedicated profile, signed in by you"]
     C -->|"types, clicks, chooses files"| D["Google Flow"]
     C -->|"types, clicks, chooses files"| E["Google Flow Music"]
@@ -456,14 +463,19 @@ flowchart LR
     B --> F[("Downloads/studiowright")]
 ```
 
-- StudioWright starts your installed Chrome on its own profile and attaches over the
+- GnmyFlow starts your installed Chrome on its own profile and attaches over the
   DevTools protocol on loopback. Chrome keeps running between commands, so every call finds
   a warm, signed-in tab.
-- Inputs are a person's actions: typing, clicking, menus and the file chooser.
-- The pages' own replies are read to learn ids, progress and download links. Requests are
-  never intercepted, replayed or rewritten, and protective tokens are never touched.
-- Nothing is sent anywhere except to Google, by Google's own pages. Your password is typed
-  by you, once, in Chrome.
+- Generation uses page controls; selected project and download operations also use
+  authenticated browser requests. Replies supply media ids, progress and download links.
+- You sign in manually. Chrome retains authentication state in the dedicated profile.
+  Loopback CDP has no application authentication: other local processes may control it.
+- Job records contain prompts and local paths; failures can save page screenshots.
+  Diagnostic scripts in `spikes/` may capture session material. These files are sensitive;
+  there is no automatic retention cleanup or application-level encryption. Do not share
+  profiles, databases, screenshots or captures without reviewing them.
+- No production telemetry destination was identified in the source audit. This is not a
+  guarantee about Chrome, dependencies or third-party provider traffic.
 
 Technical notes: [Flow](docs/notes/flow.md) · [Flow Music](docs/notes/flow-music.md).
 
@@ -479,7 +491,7 @@ Run `sw stop`, then `sw auth login` (Flow) or `sw auth login --url https://www.f
 <details>
 <summary><b>A job is stuck or very slow</b></summary>
 
-Make sure StudioWright's Chrome window is not minimized (`sw window hide` is the safe way
+Make sure GnmyFlow's Chrome window is not minimized (`sw window hide` is the safe way
 to hide it). Run with `sw -v …` to see each step. A failed job leaves a screenshot in the
 `incidents` folder of the data directory, and `sw jobs` shows the error.
 </details>
@@ -501,7 +513,7 @@ batches out. Do not run several profiles of the same account in parallel.
 <details>
 <summary><b>A large project (hundreds of media)</b></summary>
 
-Flow's grid only renders the tiles near the viewport. StudioWright finds older references
+Flow's grid only renders the tiles near the viewport. GnmyFlow finds older references
 by searching the prompt box's picker (uploads keep their `sw-<hash>` name) or by scrolling
 the grid from where the medium should be, and downloads open each medium's own edit view,
 so position in the grid does not matter. Uploaded images download only at their own size;
@@ -512,7 +524,7 @@ Flow upscales generated media only.
 <summary><b>2K / 1080p downloads are refused or paused</b></summary>
 
 Flow limits how many upscales an account may request in a row and answers further ones
-with "unusual activity". StudioWright stops at the first refusal, pauses upscales for an
+with "unusual activity". GnmyFlow stops at the first refusal, pauses upscales for an
 hour (`sw pace` shows it) and keeps generating. Download the originals meanwhile, upscale
 fewer media, or upscale locally.
 </details>
@@ -532,6 +544,12 @@ the PATH. `sw mcp` run in a terminal should wait silently for input.
 </details>
 
 ## Configuration
+
+The Python import namespace `studiowright`, `STUDIOWRIGHT_*` environment variables,
+and existing data/output directories are retained for compatibility. No profile or
+database migration is performed. The renamed plugin uses `GNMYFLOW_SOURCE` for
+its source override; update any previous `STUDIOWRIGHT_SOURCE` plugin override.
+
 
 | Variable | Meaning | Default |
 | --- | --- | --- |
@@ -557,7 +575,7 @@ sw auth rename account-1 studio       # keeps the sign-in, projects and settings
 sw auth logout studio                 # removes the profile from this computer
 ```
 
-`logout` deletes only the profile's Chrome data and StudioWright's records of it.
+`logout` deletes only the profile's Chrome data and GnmyFlow's records of it.
 Downloaded files stay where they are, and the projects stay in your Google account.
 Both `rename` and `logout` wait until that profile's Chrome is closed (`sw stop`).
 
@@ -569,6 +587,74 @@ uv run pytest                        # unit tests, no browser needed
 uv run ruff check src tests spikes
 ```
 
+### Release checks and publishing
+
+CI runs offline unit tests on Python 3.12/3.13 across Linux, macOS and Windows.
+These checks do not establish that live browser automation works on each platform.
+The build job audits both archives and installs each into a fresh environment before
+running `scripts/smoke_install.py`. That script blocks Chrome startup and socket
+connections during the CLI checks. Installation still needs access to dependency indexes.
+
+Local release checks:
+
+```bash
+uv sync --locked
+uv run --locked pytest
+uv run --locked ruff check src tests spikes scripts
+uv build
+uv run --no-project python scripts/audit_dist.py
+uvx --from twine twine check dist/*
+```
+
+Use an empty `dist/` before building; the audit expects exactly one wheel and one sdist.
+Do not install Playwright browser binaries or start Chrome for these checks: runtime
+automation attaches to separately installed Google Chrome, not a bundled browser.
+Installing the package does not configure MCP or install the Claude Code plugin.
+
+Before enabling publication, create GitHub environments `testpypi` and `pypi` with
+required reviewers, prevent self-review where available, and restrict deployment refs
+to reviewed version tags. Configure a separate Trusted Publisher (or pending publisher
+for a new project) on each index with these exact GitHub settings:
+
+- Owner: `anggi-susanto`; repository: `gnmyflow`.
+- Workflow filename: `publish.yml`.
+- Environment: `testpypi` for TestPyPI, `pypi` for PyPI.
+- Project/distribution name: `gnmyflow`.
+
+The workflow uses short-lived OIDC credentials; no permanent API token is needed.
+GitHub environment protection and index-side publisher configuration are manual steps,
+not created by the workflow. See [PyPI Trusted Publishing](https://docs.pypi.org/trusted-publishers/).
+
+After explicit release approval, create a fresh version tag matching the metadata.
+Run **Publish (manual)** from that tag, first with `testpypi`. Branch dispatches and
+mismatched tags are rejected. The workflow reruns CI, builds and validates the artifacts,
+then waits for the configured environment approval before upload. No upload runs on
+ordinary pushes or pull requests. Only the publish job has `id-token: write` permission.
+
+TestPyPI is separate from PyPI and may not contain the dependencies. In a fresh venv,
+install the exact TestPyPI package with `--no-deps`, then install its dependencies from
+PyPI separately; avoid treating a mixed-index install as proof of package provenance:
+
+```bash
+uv venv /tmp/gnmyflow-testpypi --python 3.12
+uv pip install --python /tmp/gnmyflow-testpypi/bin/python --no-deps \
+  --index-url https://test.pypi.org/simple/ 'gnmyflow==0.3.1'
+uv pip install --python /tmp/gnmyflow-testpypi/bin/python \
+  --index-url https://pypi.org/simple/ \
+  'click>=8.5.0' 'filelock>=4.1.0' 'mcp[cli]>=2.3.0' 'pillow>=11.0' \
+  'platformdirs>=4.12.4' 'playwright>=1.63.0'
+/tmp/gnmyflow-testpypi/bin/python -I scripts/smoke_install.py
+```
+
+Review the exact artifact hashes before approving the PyPI run. Each manual run rebuilds
+the artifacts; do not assume a TestPyPI upload and a later PyPI run have identical bytes.
+After PyPI installation is verified, create the GitHub release with upstream attribution
+and the compatibility/security limitations. Do not overwrite existing tags or PyPI files.
+For a bad release, stop further publishing, yank the affected PyPI version when appropriate,
+and publish a corrected version. Users can reinstall a known-good exact version; keep old
+profile data intact. Normal CLI updates use `uv tool upgrade gnmyflow` or `pipx upgrade gnmyflow`
+after a PyPI installation; VCS installations use an explicitly selected release tag.
+
 - `src/studiowright/flow/` drives Flow, `src/studiowright/music/` drives Flow Music, and
   `studio.py` adds locking, pacing, job records and downloads on top.
 - `spikes/` holds the small scripts used to map each page. Most only open menus and read
@@ -578,14 +664,14 @@ uv run ruff check src tests spikes
 
 ## Disclaimer
 
-- StudioWright is not affiliated with, endorsed or sponsored by Google LLC. Google, Flow,
+- GnmyFlow is not affiliated with, endorsed or sponsored by Google LLC. Google, Flow,
   Flow Music, Veo, Nano Banana and Lyria are trademarks of Google LLC.
 - The MIT license covers this code only. It grants no rights to Google's services or to
   what they generate. Your use of Flow and Flow Music, and of their output, is governed by
   Google's terms and your plan.
 - Automated use of a web app may conflict with its terms. Use your own account, at your
-  own risk and at a human pace. StudioWright stops when Google asks it to.
-- The web apps can change at any time and break StudioWright until it is updated.
+  own risk and at a human pace. GnmyFlow stops when Google asks it to.
+- The web apps can change at any time and break GnmyFlow until it is updated.
 
 ## License
 
@@ -593,7 +679,7 @@ uv run ruff check src tests spikes
 
 ### Single-submit create contract (version 1)
 
-`sw capabilities --json` is a local, read-only probe: it does not open Chrome, sign in,
+`gnmyflow capabilities --json` is a local, read-only probe: it does not open Chrome, sign in,
 access an account, or generate anything. Its `production_create_contract: 1` describes
 **opt-in** `sw music create "SOUND" --single-submit` behavior (not legacy defaults):
 

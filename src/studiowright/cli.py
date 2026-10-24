@@ -79,7 +79,7 @@ def _emit(result: dict[str, Any], as_json: bool) -> None:
 
 
 @click.group()
-@click.version_option(__version__, "-V", "--version", prog_name="StudioWright")
+@click.version_option(__version__, "-V", "--version", prog_name="gnmyflow")
 @click.option(
     "--profile",
     envvar="STUDIOWRIGHT_PROFILE",
@@ -90,7 +90,7 @@ def _emit(result: dict[str, Any], as_json: bool) -> None:
 @click.option("-v", "--verbose", is_flag=True, help="Log each step to stderr.")
 @click.pass_context
 def main(ctx: click.Context, profile: str, verbose: bool) -> None:
-    """StudioWright: Google Flow from the terminal. Unofficial; not affiliated with Google."""
+    """GnmyFlow: Google Flow from the terminal. Unofficial; not affiliated with Google."""
     if verbose:
         logging.basicConfig(
             level=logging.INFO, format="%(asctime)s %(message)s", datefmt="%H:%M:%S"

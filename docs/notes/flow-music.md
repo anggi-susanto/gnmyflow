@@ -1,6 +1,6 @@
-# Google Flow Music: how StudioWright drives it
+# Google Flow Music: how GnmyFlow drives it
 
-Notes from StudioWright's own probes on flowmusic.app (October 2026). The spikes in
+Notes inherited from StudioWright by Umut Koçak, with fork updates; based on probes on flowmusic.app (October 2026). The spikes in
 `spikes/music_*.py` reproduce each finding without spending credits unless stated.
 
 ## Shape of the app
@@ -11,7 +11,7 @@ through tools (`audio__create_song`, `audio__render_edit`, `audio__apply_effect`
 shortcuts that call the same tools. Sign-in is separate from Flow's (`sw auth login --url
 https://www.flowmusic.app/`), and so is the credit balance.
 
-| Feature | Where in the UI | StudioWright |
+| Feature | Where in the UI | GnmyFlow |
 | --- | --- | --- |
 | New song / instrumental | compose panel → Generate | `sw music create`, `music_generate` |
 | Extend, Cover, Replace | song menu → Remix → … (panel in edit mode) | `sw music extend/cover/replace`, `music_edit` |
@@ -48,11 +48,11 @@ and strictly positive; Python accepts fractional seconds as well. Rights confirm
 and rejection reasons are unchanged. Only the documented `complete` upload status is
 accepted; unknown statuses fail rather than returning a usable song id.
 
-## Wire facts StudioWright reads (passively)
+## Wire facts GnmyFlow reads (passively)
 
 - `GET /__api/billing/credits` → `data.credits_remaining`; `GET /__api/billing/subscription`
   → `data.subscription_tier`. Both are fetched by the page on load. An in-page fetch of
-  these fails because the app adds its own auth header, so StudioWright only reads them.
+  these fails because the app adds its own auth header, so GnmyFlow only reads them.
 - `POST /__api/producer/tool-call` (panel and menu actions) and `POST /__api/conversation`
   (chat messages) return `{"job_id"}`.
 - `GET /__api/messages/<job>/stream?last_id=0` is a server-sent-event stream:
@@ -85,12 +85,12 @@ accepted; unknown statuses fail rather than returning a usable song id.
   (Extend from / until; Replace start / end), `textarea[aria-label='Instruction']`,
   Edit Lyrics dialog (full lyrics sheet, Done), Advanced → Seed, Details → title and cover.
 - Variation and Split stems start at once from the menu; they do not open a panel.
-- Uploading audio or images shows a one-time rights notice ("I agree"). StudioWright clicks
+- Uploading audio or images shows a one-time rights notice ("I agree"). GnmyFlow clicks
   it only when the user passes `--confirm-rights` / `confirm_rights`.
 - A cover prompt closes its popover at once and draws in the background; the song must
   not be submitted until the preview image has loaded.
 - Once, Generate opened a new session but sent nothing (no tool call, nothing spent).
-  StudioWright now watches for the work-starting POST; without one within 45 s it
+  GnmyFlow now watches for the work-starting POST; without one within 45 s it
   presses Generate (or Send) once more, and other actions fail at once.
 - Templates sometimes fail on Flow Music's side (seen for Player and Simple); another
   template or a retry usually works.
@@ -113,4 +113,4 @@ accepted; unknown statuses fail rather than returning a usable song id.
 
 Audio is 48 kHz 16-bit stereo WAV. Lengths are 1:00-3:00 for new songs; an extension can
 reach past that. The Producer sometimes returns two takes and asks which is better
-("No credits used"); StudioWright saves both.
+("No credits used"); GnmyFlow saves both.

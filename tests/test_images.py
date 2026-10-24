@@ -48,9 +48,9 @@ def test_versions_agree() -> None:
     """The package, the plugin and the release the plugin's MCP server runs are one version."""
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     plugin = json.loads(
-        (ROOT / "plugins/studiowright/.claude-plugin/plugin.json").read_text(encoding="utf-8")
+        (ROOT / "plugins/gnmyflow/.claude-plugin/plugin.json").read_text(encoding="utf-8")
     )
-    mcp = (ROOT / "plugins/studiowright/.mcp.json").read_text(encoding="utf-8")
-    pinned = re.search(r"studiowright@v(\d+\.\d+\.\d+)", mcp)
+    mcp = (ROOT / "plugins/gnmyflow/.mcp.json").read_text(encoding="utf-8")
+    pinned = re.search(r"gnmyflow@v(\d+\.\d+\.\d+)", mcp)
     assert pinned is not None
     assert project["project"]["version"] == __version__ == plugin["version"] == pinned.group(1)

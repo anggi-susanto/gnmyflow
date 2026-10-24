@@ -1,11 +1,11 @@
 {
   "mcpServers": {
-    "studiowright": {
+    "gnmyflow": {
       "command": "uvx",
       "args": [
         "--from",
-        "${STUDIOWRIGHT_SOURCE:-git+https://github.com/umutkocak/studiowright@v0.2.8}",
-        "sw",
+        "${GNMYFLOW_SOURCE:-git+https://github.com/anggi-susanto/gnmyflow@v0.3.1}",
+        "gnmyflow",
         "mcp"
       ],
       "timeout": 900000

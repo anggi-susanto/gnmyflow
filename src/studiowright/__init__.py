@@ -1,3 +1,3 @@
-"""StudioWright: a fast CLI and MCP server for Google Flow and Google Flow Music."""
+"""GnmyFlow: a fork of StudioWright for Google Flow and Google Flow Music."""
 
-__version__ = "0.2.8"
+__version__ = "0.3.1"

@@ -1,11 +1,11 @@
 ---
-name: studiowright
-description: Use when the user wants images or video clips made in Google Flow (Nano Banana images; Omni or Veo video), or songs, instrumentals, song edits (extend, cover, replace, variation, trim), stems, lyrics or music videos made in Google Flow Music, wants to reuse reference images or start/end frames, or wants existing Flow or Flow Music media downloaded. Explains the StudioWright MCP tools, their options, costs and pacing.
+name: gnmyflow
+description: Use when the user wants images or video clips made in Google Flow (Nano Banana images; Omni or Veo video), or songs, instrumentals, song edits (extend, cover, replace, variation, trim), stems, lyrics or music videos made in Google Flow Music, wants to reuse reference images or start/end frames, or wants existing Flow or Flow Music media downloaded. Explains the GnmyFlow MCP tools, their options, costs and pacing.
 ---
 
-# StudioWright: Google Flow and Flow Music through the user's own Chrome
+# GnmyFlow: Google Flow and Flow Music through the user's own Chrome
 
-StudioWright drives Google Flow's and Google Flow Music's web UIs in the user's own signed-in Chrome. It spends the user's own subscriptions and credits. It is unofficial and not affiliated with Google.
+GnmyFlow drives Google Flow's and Google Flow Music's web UIs in the user's own signed-in Chrome. It spends the user's own subscriptions and credits. It is unofficial and not affiliated with Google.
 
 ## Before the first call
 

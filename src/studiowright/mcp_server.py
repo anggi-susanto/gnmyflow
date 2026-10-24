@@ -1,4 +1,4 @@
-"""StudioWright as an MCP server (stdio): the same operations as the CLI, for AI agents."""
+"""GnmyFlow as an MCP server (stdio), forked from StudioWright."""
 
 from __future__ import annotations
 
@@ -37,8 +37,8 @@ from studiowright.store import Store
 from studiowright.studio import ImageRequest, Studio, VideoRequest
 
 INSTRUCTIONS = """\
-StudioWright drives Google Flow (images and video) and Google Flow Music (songs and
-instrumentals) in the user's own signed-in Chrome, through their web UIs, using the user's
+GnmyFlow, a fork of StudioWright, drives Google Flow (images and video) and Google Flow
+Music (songs and instrumentals) in the user's own signed-in Chrome, using the user's
 own subscriptions and credits.
 
 - Images (Nano Banana) cost no credits; videos cost credits (the tool reports what Flow
@@ -56,7 +56,7 @@ own subscriptions and credits.
   have the rights to the files (confirm_rights); never set it on your own.
 """
 
-server = MCPServer("studiowright", instructions=INSTRUCTIONS)
+server = MCPServer("gnmyflow", instructions=INSTRUCTIONS)
 
 
 def _profile(profile: str | None) -> str:
